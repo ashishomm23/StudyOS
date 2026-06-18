@@ -1,0 +1,862 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>StudyOS — Student Dashboard</title>
+
+  <!-- Google Fonts: Sora for display, Inter for body -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@400;500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <link rel="stylesheet" href="style.css" />
+  <!-- Google Identity Services client script for Authentication -->
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+</head>
+<body>
+
+  <!-- ===================== ONBOARDING MODAL ===================== -->
+  <div class="onboarding-overlay hidden" id="onboardingOverlay">
+    <div class="onboarding-card">
+      <div class="brand-mark" style="margin: 0 auto 16px;">S</div>
+      <h3>Welcome to StudyOS!</h3>
+      <p>Let's personalize your setup. What should we call you?</p>
+      <div class="form-group" style="margin: 16px 0;">
+        <input type="text" id="onboardingNameInput" placeholder="Enter your name..." style="width: 100%; text-align: center;" />
+      </div>
+      <button class="btn btn-primary" id="onboardingSubmitBtn" style="width: 100%; justify-content: center;">Get Started</button>
+    </div>
+  </div>
+
+  <!-- ===================== SIDEBAR ===================== -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-top">
+      <div class="brand">
+        <div class="brand-mark">S</div>
+        <span class="brand-name">StudyOS</span>
+      </div>
+      <button class="collapse-btn" id="collapseBtn" title="Toggle sidebar" aria-label="Toggle sidebar">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="11 17 6 12 11 7"></polyline><polyline points="18 17 13 12 18 7"></polyline></svg>
+      </button>
+    </div>
+
+    <nav class="nav-list">
+      <button class="nav-item active" data-section="dashboard">
+        <span class="nav-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"></rect><rect x="14" y="3" width="7" height="5" rx="1.5"></rect><rect x="14" y="12" width="7" height="9" rx="1.5"></rect><rect x="3" y="16" width="7" height="5" rx="1.5"></rect></svg>
+        </span>
+        <span class="nav-label">Dashboard</span>
+      </button>
+
+      <button class="nav-item" data-section="subjects">
+        <span class="nav-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"></path><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"></path></svg>
+        </span>
+        <span class="nav-label">Subjects</span>
+      </button>
+
+      <button class="nav-item" data-section="attendance">
+        <span class="nav-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        </span>
+        <span class="nav-label">Attendance</span>
+      </button>
+
+      <button class="nav-item" data-section="cgpa">
+        <span class="nav-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"></path></svg>
+        </span>
+        <span class="nav-label">CGPA</span>
+      </button>
+
+      <button class="nav-item" data-section="tasks">
+        <span class="nav-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"></path><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"></path></svg>
+        </span>
+        <span class="nav-label">Assignments &amp; Exams</span>
+      </button>
+
+      <button class="nav-item" data-section="todo">
+        <span class="nav-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></svg>
+        </span>
+        <span class="nav-label">To-Do &amp; Planner</span>
+      </button>
+
+      <button class="nav-item" data-section="notes">
+        <span class="nav-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="9" y1="13" x2="15" y2="13"></line><line x1="9" y1="17" x2="15" y2="17"></line></svg>
+        </span>
+        <span class="nav-label">Notes</span>
+      </button>
+
+      <button class="nav-item" data-section="studymaterial">
+        <span class="nav-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"></path><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"></path></svg>
+        </span>
+        <span class="nav-label">Study Material</span>
+      </button>
+
+      <button class="nav-item" data-section="achievements">
+        <span class="nav-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="6"></circle><path d="M15.5 13.5L17 22l-5-3-5 3 1.5-8.5"></path></svg>
+        </span>
+        <span class="nav-label">Achievements</span>
+      </button>
+
+      <button class="nav-item" data-section="pomodoro">
+        <span class="nav-icon">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        </span>
+        <span class="nav-label">Pomodoro</span>
+      </button>
+    </nav>
+
+    <div class="sidebar-bottom">
+      <div class="streak-pill">
+        <span class="streak-flame">🔥</span>
+        <div class="streak-text">
+          <strong id="streakCount">0</strong>
+          <small>day streak</small>
+        </div>
+      </div>
+    </div>
+  </aside>
+
+  <!-- ===================== MAIN CONTENT ===================== -->
+  <main class="main" id="main">
+
+    <!-- Top bar shared across all sections -->
+    <header class="topbar">
+      <button class="mobile-menu-btn" id="mobileMenuBtn" aria-label="Open menu">
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+      </button>
+
+      <div class="search-wrap" id="searchWrap">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+        <input type="text" id="globalSearch" placeholder="Search subjects, tasks, notes..." autocomplete="off" />
+        <button class="search-clear hidden" id="searchClear" aria-label="Clear search">
+          <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+        </button>
+        <div class="search-dropdown hidden" id="searchDropdown"></div>
+      </div>
+
+      <div class="topbar-right">
+        <!-- Google Drive Integration Control Indicators -->
+        <div class="cloud-sync-container">
+          <button class="btn btn-ghost btn-sm" id="googleDriveAuthBtn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            Connect Drive
+          </button>
+          <div class="cloud-status-pill hidden" id="cloudStatusPill">
+            <span class="cloud-status-dot" id="cloudStatusDot"></span>
+            <span id="cloudStatusText">Local Storage Only</span>
+          </div>
+        </div>
+        <span class="date-pill" id="todayDate"></span>
+      </div>
+    </header>
+
+    <!-- ============ DASHBOARD / HOME ============ -->
+    <section class="page active" id="page-dashboard">
+      <div class="page-head">
+        <div>
+          <h1 id="welcomeGreeting">Welcome back 👋</h1>
+          <p class="subtitle">Here's your academic snapshot for today.</p>
+        </div>
+      </div>
+
+      <div class="stat-grid">
+        <div class="stat-card accent-mint">
+          <div class="stat-icon">📚</div>
+          <div class="stat-info">
+            <span class="stat-value" id="statSubjects">0</span>
+            <span class="stat-label">Total Subjects</span>
+          </div>
+        </div>
+        <div class="stat-card accent-violet">
+          <div class="stat-icon">📈</div>
+          <div class="stat-info">
+            <span class="stat-value" id="statAvgAttendance">0%</span>
+            <span class="stat-label">Avg. Attendance</span>
+          </div>
+        </div>
+        <div class="stat-card accent-amber">
+          <div class="stat-icon">🎯</div>
+          <div class="stat-info">
+            <span class="stat-value" id="statCGPA">0.00</span>
+            <span class="stat-label">Current CGPA</span>
+          </div>
+        </div>
+        <div class="stat-card accent-rose">
+          <div class="stat-icon">✅</div>
+          <div class="stat-info">
+            <span class="stat-value" id="statPendingTasks">0</span>
+            <span class="stat-label">Pending Tasks</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="dash-grid">
+        <div class="card chart-card">
+          <div class="card-head">
+            <h3>Attendance by Subject</h3>
+            <span class="card-tag">Live</span>
+          </div>
+          <div id="attendanceChart" class="bar-chart"></div>
+          <p class="empty-hint" id="attendanceChartEmpty">Add a subject to see your attendance chart.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>Upcoming Deadlines</h3>
+            <span class="card-tag">Next 7 days</span>
+          </div>
+          <ul class="mini-list" id="upcomingDeadlines">
+            <li class="empty-hint">No upcoming deadlines. You're all caught up!</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="dash-grid">
+        <div class="card">
+          <div class="card-head">
+            <h3>Today's Plan</h3>
+            <span class="card-tag" id="todayPlanCount">0 tasks</span>
+          </div>
+          <ul class="mini-list" id="todayPlanList">
+            <li class="empty-hint">Nothing planned for today yet.</li>
+          </ul>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>Latest Achievements</h3>
+            <span class="card-tag">🏆</span>
+          </div>
+          <ul class="mini-list" id="recentAchievements">
+            <li class="empty-hint">No achievements added yet.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ SUBJECT MANAGER ============ -->
+    <section class="page" id="page-subjects">
+      <div class="page-head">
+        <div>
+          <h1>Subject Manager</h1>
+          <p class="subtitle">Add, edit and organize every subject you're taking.</p>
+        </div>
+        <button class="btn btn-primary" id="addSubjectBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Add Subject
+        </button>
+      </div>
+
+      <!-- Add/Edit subject form (hidden by default) -->
+      <div class="card form-card hidden" id="subjectFormCard">
+        <h3 id="subjectFormTitle">New Subject</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="subjectName">Subject name</label>
+            <input type="text" id="subjectName" placeholder="e.g. Data Structures" />
+          </div>
+          <div class="form-group">
+            <label for="subjectCode">Subject code (optional)</label>
+            <input type="text" id="subjectCode" placeholder="e.g. CS201" />
+          </div>
+          <div class="form-group">
+            <label for="subjectColor">Color tag</label>
+            <input type="color" id="subjectColor" value="#6ee7b7" />
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-ghost" id="cancelSubjectBtn">Cancel</button>
+          <button class="btn btn-primary" id="saveSubjectBtn">Save Subject</button>
+        </div>
+        <input type="hidden" id="editingSubjectId" />
+      </div>
+
+      <div class="subject-grid" id="subjectGrid">
+        <!-- Subject cards injected by JS -->
+      </div>
+      <p class="empty-hint" id="subjectsEmpty">No subjects yet — click "Add Subject" to create your first one.</p>
+    </section>
+
+    <!-- ============ ATTENDANCE TRACKER ============ -->
+    <section class="page" id="page-attendance">
+      <div class="page-head">
+        <div>
+          <h1>Attendance Tracker</h1>
+          <p class="subtitle">Mark each class and watch your percentage update instantly.</p>
+        </div>
+        <div class="attendance-goal-global">
+          <label for="globalAttendanceGoal">Default goal</label>
+          <div class="goal-input-wrap">
+            <input type="number" id="globalAttendanceGoal" min="1" max="100" value="75" />
+            <span>%</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="attendance-grid" id="attendanceGrid">
+        <!-- Attendance cards injected by JS -->
+      </div>
+      <p class="empty-hint" id="attendanceEmpty">No subjects yet. Go to Subject Manager to add one.</p>
+    </section>
+
+    <!-- ============ CGPA CALCULATOR ============ -->
+    <section class="page" id="page-cgpa">
+      <div class="page-head">
+        <div>
+          <h1>CGPA Calculator</h1>
+          <p class="subtitle">Enter your SGPA and credits for each semester to track your CGPA.</p>
+        </div>
+        <button class="btn btn-primary" id="addSemesterBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Add Semester
+        </button>
+      </div>
+
+      <div class="dash-grid">
+        <div class="card">
+          <div class="card-head">
+            <h3>Semesters</h3>
+            <span class="card-tag" id="semesterCountTag">0 semesters</span>
+          </div>
+          <div class="table-wrap">
+            <table class="data-table" id="semesterTable">
+              <thead>
+                <tr>
+                  <th>Semester</th>
+                  <th>SGPA</th>
+                  <th>Credits</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody id="semesterTableBody"></tbody>
+            </table>
+          </div>
+          <p class="empty-hint" id="semestersEmpty">No semesters added yet.</p>
+        </div>
+
+        <div class="card cgpa-result-card">
+          <div class="card-head">
+            <h3>Your CGPA</h3>
+          </div>
+          <div class="cgpa-display">
+            <span class="cgpa-number" id="cgpaResult">0.00</span>
+            <span class="cgpa-sub">weighted by credits</span>
+          </div>
+          <div class="cgpa-bar">
+            <div class="cgpa-bar-fill" id="cgpaBarFill"></div>
+          </div>
+          <p class="empty-hint">CGPA = Σ(SGPA × Credits) ÷ Σ(Credits)</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ASSIGNMENTS & EXAMS ============ -->
+    <section class="page" id="page-tasks">
+      <div class="page-head">
+        <div>
+          <h1>Assignments &amp; Exams</h1>
+          <p class="subtitle">Track due dates and mark items complete as you go.</p>
+        </div>
+        <button class="btn btn-primary" id="addTaskBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Add Item
+        </button>
+      </div>
+
+      <!-- Add task form -->
+      <div class="card form-card hidden" id="taskFormCard">
+        <h3>New Assignment / Exam</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="taskTitle">Title</label>
+            <input type="text" id="taskTitle" placeholder="e.g. DBMS Assignment 3" />
+          </div>
+          <div class="form-group">
+            <label for="taskSubjectSelect">Subject</label>
+            <select id="taskSubjectSelect"></select>
+          </div>
+          <div class="form-group">
+            <label for="taskType">Type</label>
+            <select id="taskType">
+              <option value="assignment">Assignment</option>
+              <option value="exam">Exam</option>
+              <option value="project">Project</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="taskDueDate">Due date</label>
+            <input type="date" id="taskDueDate" />
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-ghost" id="cancelTaskBtn">Cancel</button>
+          <button class="btn btn-primary" id="saveTaskBtn">Save Item</button>
+        </div>
+      </div>
+
+      <!-- Filters -->
+      <div class="filter-bar">
+        <button class="filter-chip active" data-filter="all">All</button>
+        <button class="filter-chip" data-filter="pending">Pending</button>
+        <button class="filter-chip" data-filter="completed">Completed</button>
+        <button class="filter-chip" data-filter="assignment">Assignments</button>
+        <button class="filter-chip" data-filter="exam">Exams</button>
+        <button class="filter-chip" data-filter="project">Projects</button>
+      </div>
+
+      <div class="task-list" id="taskList"></div>
+      <p class="empty-hint" id="tasksEmpty">No assignments or exams added yet.</p>
+    </section>
+
+    <!-- ============ TO-DO & PLANNER ============ -->
+    <section class="page" id="page-todo">
+      <div class="page-head">
+        <div>
+          <h1>To-Do &amp; Daily Planner</h1>
+          <p class="subtitle">Organize your day, one task at a time.</p>
+        </div>
+      </div>
+
+      <div class="dash-grid">
+        <div class="card">
+          <div class="card-head">
+            <h3>To-Do List</h3>
+            <span class="card-tag" id="todoCountTag">0 items</span>
+          </div>
+          <div class="inline-form">
+            <input type="text" id="todoInput" placeholder="Add a new to-do..." />
+            <button class="btn btn-primary btn-sm" id="addTodoBtn">Add</button>
+          </div>
+          <ul class="todo-list" id="todoList"></ul>
+          <p class="empty-hint" id="todoEmpty">No to-dos yet. Add your first task above.</p>
+        </div>
+
+        <div class="card">
+          <div class="card-head">
+            <h3>Daily Planner</h3>
+            <input type="date" id="plannerDate" class="planner-date" />
+          </div>
+          <div class="inline-form">
+            <input type="time" id="plannerTime" />
+            <input type="text" id="plannerActivity" placeholder="What's the plan?" />
+            <button class="btn btn-primary btn-sm" id="addPlannerBtn">Add</button>
+          </div>
+          <ul class="planner-list" id="plannerList"></ul>
+          <p class="empty-hint" id="plannerEmpty">Nothing planned for this date.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ NOTES ============ -->
+    <section class="page" id="page-notes">
+      <div class="page-head">
+        <div>
+          <h1>Notes</h1>
+          <p class="subtitle">Quick notes saved automatically to your browser.</p>
+        </div>
+        <button class="btn btn-primary" id="addNoteBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          New Note
+        </button>
+      </div>
+
+      <div class="notes-grid" id="notesGrid"></div>
+      <p class="empty-hint" id="notesEmpty">No notes yet. Click "New Note" to write one.</p>
+    </section>
+
+    <!-- ============ STUDY MATERIAL ============ -->
+    <section class="page" id="page-studymaterial">
+      <div class="page-head">
+        <div>
+          <h1>Study Material</h1>
+          <p class="subtitle">Create documents, write notes with full formatting, or upload your files.</p>
+        </div>
+        <div class="sm-head-actions">
+          <label class="btn btn-ghost" for="smFileUpload">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+            Upload File
+          </label>
+          <input type="file" id="smFileUpload" accept=".pdf,.doc,.docx,.ppt,.pptx,.txt,.png,.jpg,.jpeg,.gif,.mp4,.mp3" multiple hidden />
+          <button class="btn btn-primary" id="smNewDocBtn">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+            New Document
+          </button>
+        </div>
+      </div>
+
+      <!-- Two-pane layout: document list + editor -->
+      <div class="sm-layout" id="smLayout">
+
+        <!-- Left: document list -->
+        <div class="sm-sidebar-pane" id="smSidebarPane">
+          <div class="sm-search-wrap">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"></circle><line x1="21" y1="21" x2="16.65" y2="16.65"></line></svg>
+            <input type="text" id="smDocSearch" placeholder="Search documents..." />
+          </div>
+
+          <div class="sm-filter-row">
+            <button class="filter-chip active" data-smfilter="all">All</button>
+            <button class="filter-chip" data-smfilter="document">Docs</button>
+            <button class="filter-chip" data-smfilter="upload">Uploads</button>
+          </div>
+
+          <!-- Subject filter -->
+          <div class="sm-subject-filter-wrap">
+            <select id="smSubjectFilter" class="sm-subject-filter-select">
+              <option value="">All subjects</option>
+            </select>
+          </div>
+
+          <ul class="sm-doc-list" id="smDocList"></ul>
+          <p class="empty-hint" id="smDocListEmpty">No documents yet.</p>
+        </div>
+
+        <!-- Right: editor / viewer pane -->
+        <div class="sm-editor-pane" id="smEditorPane">
+          <!-- Empty state when no doc selected -->
+          <div class="sm-empty-state" id="smEmptyState">
+            <div class="sm-empty-icon">📄</div>
+            <h3>Nothing open</h3>
+            <p>Select a document from the list or create a new one.</p>
+            <button class="btn btn-primary" id="smEmptyNewBtn">Create document</button>
+          </div>
+
+          <!-- Editor (hidden until doc selected) -->
+          <div class="sm-editor-wrap hidden" id="smEditorWrap">
+
+            <!-- Document title -->
+            <input type="text" class="sm-doc-title-input" id="smDocTitle" placeholder="Untitled Document" />
+
+            <!-- Subject tag + last saved -->
+            <div class="sm-doc-meta">
+              <select id="smDocSubject" class="sm-doc-subject-select">
+                <option value="">No subject</option>
+              </select>
+              <span class="sm-saved-label" id="smSavedLabel">All changes saved</span>
+              <button class="icon-btn danger" id="smDeleteDocBtn" title="Delete document">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg>
+              </button>
+            </div>
+
+            <!-- Rich text toolbar -->
+            <div class="sm-toolbar" id="smToolbar">
+              <!-- Text style -->
+              <div class="sm-toolbar-group">
+                <select class="sm-tb-select" id="tbHeading" title="Text style">
+                  <option value="p">Paragraph</option>
+                  <option value="h1">Heading 1</option>
+                  <option value="h2">Heading 2</option>
+                  <option value="h3">Heading 3</option>
+                  <option value="h4">Heading 4</option>
+                </select>
+              </div>
+              <div class="sm-toolbar-divider"></div>
+              <!-- Font family -->
+              <div class="sm-toolbar-group">
+                <select class="sm-tb-select" id="tbFont" title="Font">
+                  <option value="Inter, sans-serif">Inter</option>
+                  <option value="'Sora', sans-serif">Sora</option>
+                  <option value="Georgia, serif">Georgia</option>
+                  <option value="'Courier New', monospace">Mono</option>
+                </select>
+              </div>
+              <!-- Font size -->
+              <div class="sm-toolbar-group">
+                <select class="sm-tb-select sm-tb-select--narrow" id="tbFontSize" title="Font size">
+                  <option value="12px">12</option>
+                  <option value="14px">14</option>
+                  <option value="16px" selected>16</option>
+                  <option value="18px">18</option>
+                  <option value="20px">20</option>
+                  <option value="24px">24</option>
+                  <option value="32px">32</option>
+                  <option value="48px">48</option>
+                </select>
+              </div>
+              <div class="sm-toolbar-divider"></div>
+              <!-- Bold / Italic / Underline / Strikethrough -->
+              <div class="sm-toolbar-group">
+                <button class="sm-tb-btn" data-cmd="bold" title="Bold (Ctrl+B)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 4h8a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path><path d="M6 12h9a4 4 0 0 1 4 4 4 4 0 0 1-4 4H6z"></path></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="italic" title="Italic (Ctrl+I)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="4" x2="10" y2="4"></line><line x1="14" y1="20" x2="5" y2="20"></line><line x1="15" y1="4" x2="9" y2="20"></line></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="underline" title="Underline (Ctrl+U)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3v7a6 6 0 0 0 6 6 6 6 0 0 0 6-6V3"></path><line x1="4" y1="21" x2="20" y2="21"></line></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="strikethrough" title="Strikethrough">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="12" x2="20" y2="12"></line><path d="M17.5 5.5C17 4 15.8 3 14 3c-2.2 0-4 1.8-4 4 0 1.5.8 2.8 2 3.5"></path><path d="M6.5 18.5c.5 1.5 1.8 2.5 3.5 2.5 2.2 0 4-1.8 4-4 0-1.5-.8-2.8-2-3.5"></path></svg>
+                </button>
+              </div>
+              <div class="sm-toolbar-divider"></div>
+              <!-- Font color / Highlight -->
+              <div class="sm-toolbar-group">
+                <label class="sm-tb-color-btn" title="Text color">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M9 7l6 10"></path><path d="M6 17l2-4"></path><path d="M18 17l-2-4"></path><line x1="3" y1="21" x2="21" y2="21"></line></svg>
+                  <input type="color" id="tbTextColor" value="#f8fafc" title="Text color" />
+                </label>
+                <label class="sm-tb-color-btn" title="Highlight">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor"><path d="M15.5 2.1L21.9 8.5 8.5 21.9 2.1 15.5 15.5 2.1z" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/><path d="M2 22h7" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"/></svg>
+                  <input type="color" id="tbHighlight" value="#fbbf24" title="Highlight" />
+                </label>
+              </div>
+              <div class="sm-toolbar-divider"></div>
+              <!-- Align -->
+              <div class="sm-toolbar-group">
+                <button class="sm-tb-btn" data-cmd="justifyLeft" title="Align left">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="15" y2="12"></line><line x1="3" y1="18" x2="18" y2="18"></line></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="justifyCenter" title="Center">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="6" y1="12" x2="18" y2="12"></line><line x1="4" y1="18" x2="20" y2="18"></line></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="justifyRight" title="Align right">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="9" y1="12" x2="21" y2="12"></line><line x1="6" y1="18" x2="21" y2="18"></line></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="justifyFull" title="Justify">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+                </button>
+              </div>
+              <div class="sm-toolbar-divider"></div>
+              <!-- Lists -->
+              <div class="sm-toolbar-group">
+                <button class="sm-tb-btn" data-cmd="insertUnorderedList" title="Bullet list">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="9" y1="6" x2="20" y2="6"></line><line x1="9" y1="12" x2="20" y2="12"></line><line x1="9" y1="18" x2="20" y2="18"></line><circle cx="4" cy="6" r="1.5" fill="currentColor"></circle><circle cx="4" cy="12" r="1.5" fill="currentColor"></circle><circle cx="4" cy="18" r="1.5" fill="currentColor"></circle></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="insertOrderedList" title="Numbered list">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="6" x2="21" y2="6"></line><line x1="10" y1="12" x2="21" y2="12"></line><line x1="10" y1="18" x2="21" y2="18"></line><path d="M4 6h1v4"></path><path d="M4 10h2"></path><path d="M6 18H4c0-1 2-2 2-3s-1-1.5-2-1"></path></svg>
+                </button>
+              </div>
+              <div class="sm-toolbar-divider"></div>
+              <!-- Extra: link, table, code, indent -->
+              <div class="sm-toolbar-group">
+                <button class="sm-tb-btn" data-cmd="insertLink" title="Insert link">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"></path><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"></path></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="insertTable" title="Insert table">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"></rect><line x1="3" y1="9" x2="21" y2="9"></line><line x1="3" y1="15" x2="21" y2="15"></line><line x1="9" y1="3" x2="9" y2="21"></line><line x1="15" y1="3" x2="15" y2="21"></line></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="formatBlock" data-value="pre" title="Code block">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"></polyline><polyline points="8 6 2 12 8 18"></polyline></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="outdent" title="Decrease indent">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="10" x2="7" y2="10"></line><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="14" x2="3" y2="14"></line><line x1="21" y1="18" x2="7" y2="18"></line><polyline points="11 10 7 6 11 2"></polyline></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="indent" title="Increase indent">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="21" y1="10" x2="7" y2="10"></line><line x1="21" y1="6" x2="3" y2="6"></line><line x1="21" y1="14" x2="3" y2="14"></line><line x1="21" y1="18" x2="7" y2="18"></line><polyline points="7 10 3 6 7 2"></polyline></svg>
+                </button>
+              </div>
+              <div class="sm-toolbar-divider"></div>
+              <!-- Undo / Redo -->
+              <div class="sm-toolbar-group">
+                <button class="sm-tb-btn" data-cmd="undo" title="Undo (Ctrl+Z)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+                </button>
+                <button class="sm-tb-btn" data-cmd="redo" title="Redo (Ctrl+Y)">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+                </button>
+              </div>
+              <!-- Word count -->
+              <div class="sm-wordcount" id="smWordCount">0 words</div>
+            </div>
+
+            <!-- The actual contentEditable editor -->
+            <div class="sm-editor" id="smEditor" contenteditable="true" spellcheck="true"
+              data-placeholder="Start writing…"></div>
+
+          </div>
+
+          <!-- Upload viewer (shown when viewing an uploaded file) -->
+          <div class="sm-upload-view hidden" id="smUploadView">
+            <div class="sm-upload-header">
+              <div>
+                <h3 id="smUploadFileName">file.pdf</h3>
+                <span class="sm-upload-meta" id="smUploadMeta">Uploaded</span>
+              </div>
+              <div style="display:flex;gap:8px;align-items:center;">
+                <select id="smUploadSubject" class="sm-doc-subject-select" title="Assign subject">
+                  <option value="">No subject</option>
+                </select>
+                <a class="btn btn-ghost" id="smUploadDownload" download>
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
+                  Download
+                </a>
+                <button class="icon-btn danger" id="smDeleteUploadBtn" title="Delete">
+                  <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg>
+                </button>
+              </div>
+            </div>
+            <div class="sm-upload-preview" id="smUploadPreview"></div>
+          </div>
+
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ ACHIEVEMENTS ============ -->
+    <section class="page" id="page-achievements">
+      <div class="page-head">
+        <div>
+          <h1>Achievements</h1>
+          <p class="subtitle">Celebrate your wins — academic and beyond.</p>
+        </div>
+        <button class="btn btn-primary" id="addAchievementBtn">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+          Add Achievement
+        </button>
+      </div>
+
+      <!-- Add achievement form -->
+      <div class="card form-card hidden" id="achievementFormCard">
+        <h3>New Achievement</h3>
+        <div class="form-row">
+          <div class="form-group">
+            <label for="achievementTitle">Title</label>
+            <input type="text" id="achievementTitle" placeholder="e.g. Semester 3 - Dean's List" />
+          </div>
+          <div class="form-group">
+            <label for="achievementCategory">Category</label>
+            <select id="achievementCategory">
+              <option value="distinction">Distinction</option>
+              <option value="first-class">First Class</option>
+              <option value="second-class">Second Class</option>
+              <option value="gold-medal">Gold Medal</option>
+              <option value="scholarship">Scholarship</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="achievementDate">Date</label>
+            <input type="date" id="achievementDate" />
+          </div>
+        </div>
+        <div class="form-actions">
+          <button class="btn btn-ghost" id="cancelAchievementBtn">Cancel</button>
+          <button class="btn btn-primary" id="saveAchievementBtn">Save Achievement</button>
+        </div>
+      </div>
+
+      <div class="achievement-grid" id="achievementGrid"></div>
+      <p class="empty-hint" id="achievementsEmpty">No achievements yet. Add your first milestone!</p>
+    </section>
+
+    <!-- ============ POMODORO ============ -->
+    <section class="page" id="page-pomodoro">
+      <div class="page-head">
+        <div>
+          <h1>Pomodoro Timer</h1>
+          <p class="subtitle">Stay locked in. Focus hard, rest well.</p>
+        </div>
+      </div>
+
+      <div class="pomo-layout">
+        <!-- Timer card -->
+        <div class="pomo-card">
+          <!-- Mode tabs -->
+          <div class="pomo-tabs">
+            <button class="pomo-tab active" data-mode="work">Focus</button>
+            <button class="pomo-tab" data-mode="short">Short Break</button>
+            <button class="pomo-tab" data-mode="long">Long Break</button>
+          </div>
+
+          <!-- Ring timer -->
+          <div class="pomo-ring-wrap">
+            <svg class="pomo-ring" viewBox="0 0 220 220" xmlns="http://www.w3.org/2000/svg">
+              <circle class="pomo-ring-bg" cx="110" cy="110" r="96"/>
+              <circle class="pomo-ring-fg" id="pomoRingFg" cx="110" cy="110" r="96"/>
+            </svg>
+            <div class="pomo-ring-inner">
+              <div class="pomo-time" id="pomoTime">25:00</div>
+              <div class="pomo-mode-label" id="pomoModeLabel">Focus</div>
+            </div>
+          </div>
+
+          <!-- Controls -->
+          <div class="pomo-controls">
+            <button class="pomo-ctrl-btn" id="pomoResetBtn" title="Reset">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"></polyline><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"></path></svg>
+            </button>
+            <button class="pomo-play-btn" id="pomoPlayBtn">
+              <svg id="pomoPlayIcon" width="28" height="28" viewBox="0 0 24 24" fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+            </button>
+            <button class="pomo-ctrl-btn" id="pomoSkipBtn" title="Skip to next">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
+            </button>
+          </div>
+
+          <!-- Session counter -->
+          <div class="pomo-sessions">
+            <span id="pomoSessionDots"></span>
+            <span class="pomo-session-text" id="pomoSessionText">Session 1</span>
+          </div>
+        </div>
+
+        <!-- Settings card -->
+        <div class="pomo-settings-card">
+          <h3>Timer Settings</h3>
+          <div class="pomo-settings-grid">
+            <div class="form-group">
+              <label for="pomoWorkMin">Focus (min)</label>
+              <input type="number" id="pomoWorkMin" min="1" max="90" value="25" />
+            </div>
+            <div class="form-group">
+              <label for="pomoShortMin">Short break (min)</label>
+              <input type="number" id="pomoShortMin" min="1" max="30" value="5" />
+            </div>
+            <div class="form-group">
+              <label for="pomoLongMin">Long break (min)</label>
+              <input type="number" id="pomoLongMin" min="1" max="60" value="15" />
+            </div>
+            <div class="form-group">
+              <label for="pomoSessionsUntilLong">Sessions until long break</label>
+              <input type="number" id="pomoSessionsUntilLong" min="1" max="10" value="4" />
+            </div>
+          </div>
+          <button class="btn btn-primary" id="pomoApplySettings" style="width:100%;margin-top:8px;">Apply Settings</button>
+
+          <!-- Sound toggle -->
+          <div class="pomo-sound-row">
+            <span>Notification sound</span>
+            <label class="pomo-toggle">
+              <input type="checkbox" id="pomoSoundToggle" checked />
+              <span class="pomo-toggle-slider"></span>
+            </label>
+          </div>
+
+          <!-- Today's stats -->
+          <div class="pomo-stats">
+            <h4>Today's Focus</h4>
+            <div class="pomo-stats-grid">
+              <div class="pomo-stat-item">
+                <span class="pomo-stat-val" id="pomoTodaySessions">0</span>
+                <span class="pomo-stat-lbl">Sessions</span>
+              </div>
+              <div class="pomo-stat-item">
+                <span class="pomo-stat-val" id="pomoTodayMinutes">0</span>
+                <span class="pomo-stat-lbl">Minutes focused</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- Sidebar overlay for mobile -->
+  <div class="sidebar-overlay" id="sidebarOverlay"></div>
+
+  <!-- Toast notification -->
+  <div class="toast" id="toast"></div>
+
+  <script src="script.js"></script>
+</body>
+</html>
