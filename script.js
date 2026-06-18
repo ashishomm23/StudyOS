@@ -29,7 +29,7 @@ const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const BACKUP_FILE_NAME = "study_os_cloud_sync.json";
 const SIGNED_IN_FLAG_KEY = "studyos_drive_connected"; 
 
-let codeClient = null; // Switched to code engine client
+let tokenClient = null; 
 let googleAccessToken = null;
 let cloudSyncStatus = 'idle'; 
 let debounceSaveTimeout = null;
@@ -41,70 +41,51 @@ function initGoogleDriveAuth() {
   }
   
   try {
-    // Using initCodeClient instead of initTokenClient for cross-device state persistence
-    codeClient = window.google.accounts.oauth2.initCodeClient({
+    tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       scope: DRIVE_SCOPE,
-      ux_mode: 'popup',
-      callback: async (authResponse) => {
-        if (authResponse.code) {
-          // The authorization code can be safely cached or used to coordinate 
-          // direct verification tokens.
-          console.log("Authorization code received successfully.");
-          localStorage.setItem(SIGNED_IN_FLAG_KEY, 'true');
-          
-          // For frontend-only architectures, request runtime implicit flow tokens 
-          // dynamically while setting long-lived cross-device flags.
-          switchToImplicitTokenFetch();
+      // If signed in flag is true, use 'none' for a zero-popup silent check
+      prompt: localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true' ? 'none' : 'consent',
+      callback: async (tokenResponse) => {
+        if (tokenResponse.access_token) {
+          googleAccessToken = tokenResponse.access_token;
+          localStorage.setItem(SIGNED_IN_FLAG_KEY, 'true'); 
+          updateCloudUI('saved');
+          await pullFromDrive();
         }
       },
+      error_callback: (err) => {
+        console.warn("Background authentication check response:", err);
+        if (err.error === 'immediate_failed' || err.error === 'interaction_required') {
+          // Fall back gracefully to idle state so user can connect manually
+          updateCloudUI('idle');
+        }
+      }
     });
 
-    bindAuthButton();
-    autoRestoreCloudSession();
+    const authBtn = document.getElementById('googleDriveAuthBtn');
+    if (authBtn) {
+      authBtn.replaceWith(authBtn.cloneNode(true)); 
+      
+      document.getElementById('googleDriveAuthBtn').addEventListener('click', () => {
+        if (tokenClient) {
+          // Physical clicks always force interaction options
+          tokenClient.requestAccessToken({ prompt: 'consent' });
+        } else {
+          showToast("Google client initialization error. Check Client ID.");
+        }
+      });
+    }
+
+    // AUTO-LOGIN TRIGGER ON REFRESH
+    if (localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true') {
+      console.log("Restoring previous cloud sync session silently...");
+      updateCloudUI('syncing');
+      tokenClient.requestAccessToken({ prompt: 'none' });
+    }
+
   } catch (err) {
     console.error("Failed to initialize Google Auth client:", err);
-  }
-}
-
-function bindAuthButton() {
-  const authBtn = document.getElementById('googleDriveAuthBtn');
-  if (authBtn) {
-    authBtn.replaceWith(authBtn.cloneNode(true)); 
-    document.getElementById('googleDriveAuthBtn').addEventListener('click', () => {
-      if (codeClient) {
-        codeClient.requestCode();
-      } else {
-        switchToImplicitTokenFetch(true);
-      }
-    });
-  }
-}
-
-function switchToImplicitTokenFetch(forceConsent = false) {
-  window.google.accounts.oauth2.initTokenClient({
-    client_id: GOOGLE_CLIENT_ID,
-    scope: DRIVE_SCOPE,
-    prompt: forceConsent ? 'consent' : '',
-    callback: async (tokenResponse) => {
-      if (tokenResponse.access_token) {
-        googleAccessToken = tokenResponse.access_token;
-        localStorage.setItem(SIGNED_IN_FLAG_KEY, 'true');
-        updateCloudUI('saved');
-        await pullFromDrive();
-      }
-    }
-  }).requestAccessToken();
-}
-
-function autoRestoreCloudSession() {
-  if (localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true') {
-    console.log("Restoring long-lived persistent cloud session across window parameters...");
-    updateCloudUI('syncing');
-    // Quietly wake up tracking tokens without an intrusive modal prompt interruption
-    setTimeout(() => {
-      switchToImplicitTokenFetch(false);
-    }, 1000);
   }
 }
 
@@ -206,74 +187,6 @@ function updateCloudUI(status, msg = '') {
     default: text.textContent = "Cloud Active";
   }
 }
-
-function initGoogleDriveAuth() {
-  if (typeof window.google === 'undefined' || typeof window.google.accounts === 'undefined') {
-    setTimeout(initGoogleDriveAuth, 500);
-    return;
-  }
-  
-  try {
-    tokenClient = window.google.accounts.oauth2.initTokenClient({
-      client_id: GOOGLE_CLIENT_ID,
-      scope: DRIVE_SCOPE,
-      // Change prompt to 'none' for seamless background token acquisition
-      prompt: localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true' ? '' : 'consent',
-      callback: async (tokenResponse) => {
-        if (tokenResponse.access_token) {
-          googleAccessToken = tokenResponse.access_token;
-          
-          // Set our flag so the app remembers we are connected[cite: 2]
-          localStorage.setItem(SIGNED_IN_FLAG_KEY, 'true'); 
-          
-          updateCloudUI('saved');
-          await pullFromDrive();
-        }
-      },
-      error_callback: (err) => {
-        // If background renewal fails, clear flag and let user click manually
-        if (err.error === 'immediate_failed') {
-          localStorage.removeItem(SIGNED_IN_FLAG_KEY);
-          updateCloudUI('idle');
-        }
-      }
-    });
-
-    const authBtn = document.getElementById('googleDriveAuthBtn');
-    if (authBtn) {
-      authBtn.replaceWith(authBtn.cloneNode(true)); 
-      
-      document.getElementById('googleDriveAuthBtn').addEventListener('click', () => {
-        if (tokenClient) {
-          // Force prompt consent on a manual user click interaction
-          tokenClient.requestAccessToken({ prompt: 'consent' });
-        } else {
-          showToast("Google client initialization error. Check Client ID.");
-        }
-      });
-    }
-
-    // AUTO-LOGIN TRIGGER: If they logged in previously, request a token silently right now![cite: 2]
-    if (localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true') {
-      console.log("Restoring previous cloud sync session...");
-      updateCloudUI('syncing');
-      tokenClient.requestAccessToken({ hint: 'skip_prompt' });
-    }
-
-  } catch (err) {
-    console.error("Failed to initialize Google Auth client:", err);
-  }
-}
-
-
-  document.getElementById('googleDriveAuthBtn').addEventListener('click', () => {
-    if (tokenClient) {
-      tokenClient.requestAccessToken({ prompt: 'consent' });
-    } else {
-      showToast("Google client initialization error. Check Client ID.");
-    }
-  });
-
 
 function scheduleCloudSync() {
   if (!googleAccessToken) return;
@@ -634,24 +547,6 @@ function renderSearchDropdown(query) {
   });
 
   dropdown.classList.remove('hidden');
-}
-
-function escapeRegex(str) {
-  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-function sectionLabel(section) {
-  const map = {
-    dashboard: 'Dashboard', subjects: 'Subjects', attendance: 'Attendance',
-    cgpa: 'CGPA', tasks: 'Tasks', todo: 'To-Do', notes: 'Notes',
-    achievements: 'Achievements', studymaterial: 'Study Material'
-  };
-  return map[section] || section;
-}
-
-function navigateToSection(section) {
-  const navItem = document.querySelector(`.nav-item[data-section="${section}"]`);
-  if (navItem) navItem.click();
 }
 
 /* ============================================================
@@ -2212,16 +2107,6 @@ function renderDocList() {
   highlightActiveDoc();
 }
 
-function escapeHtml(str) {
-  if (str === null || str === undefined) return '';
-  return String(str)
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;');
-}
-
 /* ============================================================
    POMODORO TIMER
    ============================================================ */
@@ -2517,7 +2402,6 @@ document.addEventListener('DOMContentLoaded', () => {
   initPomodoro();
   
   initGoogleDriveAuth();
-  updateCloudUI('idle');
 
   renderAll();
 });
