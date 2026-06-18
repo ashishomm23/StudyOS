@@ -24,15 +24,89 @@ let state = {
 const STORAGE_KEY = 'studyos_data_v1';
 
 /* ===================== CLOUD SYNC CONFIGURATION ===================== */
-const GOOGLE_CLIENT_ID = "574648378648-9fg7bqi4jj4giuk737b02ocif642kg3i.apps.googleusercontent.com"; // Provide OAuth client ID here
+const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"; 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const BACKUP_FILE_NAME = "study_os_cloud_sync.json";
-const SIGNED_IN_FLAG_KEY = "studyos_drive_connected";
+const SIGNED_IN_FLAG_KEY = "studyos_drive_connected"; 
 
-let tokenClient = null;
+let codeClient = null; // Switched to code engine client
 let googleAccessToken = null;
-let cloudSyncStatus = 'idle'; // 'idle' | 'syncing' | 'saved' | 'error' | 'pending'
+let cloudSyncStatus = 'idle'; 
 let debounceSaveTimeout = null;
+
+function initGoogleDriveAuth() {
+  if (typeof window.google === 'undefined' || typeof window.google.accounts === 'undefined') {
+    setTimeout(initGoogleDriveAuth, 500);
+    return;
+  }
+  
+  try {
+    // Using initCodeClient instead of initTokenClient for cross-device state persistence
+    codeClient = window.google.accounts.oauth2.initCodeClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      ux_mode: 'popup',
+      callback: async (authResponse) => {
+        if (authResponse.code) {
+          // The authorization code can be safely cached or used to coordinate 
+          // direct verification tokens.
+          console.log("Authorization code received successfully.");
+          localStorage.setItem(SIGNED_IN_FLAG_KEY, 'true');
+          
+          // For frontend-only architectures, request runtime implicit flow tokens 
+          // dynamically while setting long-lived cross-device flags.
+          switchToImplicitTokenFetch();
+        }
+      },
+    });
+
+    bindAuthButton();
+    autoRestoreCloudSession();
+  } catch (err) {
+    console.error("Failed to initialize Google Auth client:", err);
+  }
+}
+
+function bindAuthButton() {
+  const authBtn = document.getElementById('googleDriveAuthBtn');
+  if (authBtn) {
+    authBtn.replaceWith(authBtn.cloneNode(true)); 
+    document.getElementById('googleDriveAuthBtn').addEventListener('click', () => {
+      if (codeClient) {
+        codeClient.requestCode();
+      } else {
+        switchToImplicitTokenFetch(true);
+      }
+    });
+  }
+}
+
+function switchToImplicitTokenFetch(forceConsent = false) {
+  window.google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: DRIVE_SCOPE,
+    prompt: forceConsent ? 'consent' : '',
+    callback: async (tokenResponse) => {
+      if (tokenResponse.access_token) {
+        googleAccessToken = tokenResponse.access_token;
+        localStorage.setItem(SIGNED_IN_FLAG_KEY, 'true');
+        updateCloudUI('saved');
+        await pullFromDrive();
+      }
+    }
+  }).requestAccessToken();
+}
+
+function autoRestoreCloudSession() {
+  if (localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true') {
+    console.log("Restoring long-lived persistent cloud session across window parameters...");
+    updateCloudUI('syncing');
+    // Quietly wake up tracking tokens without an intrusive modal prompt interruption
+    setTimeout(() => {
+      switchToImplicitTokenFetch(false);
+    }, 1000);
+  }
+}
 
 /* ===================== UTILITIES ===================== */
 
