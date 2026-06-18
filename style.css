@@ -2358,3 +2358,13 @@ input[type="color"] {
 @media (max-width: 900px) {
   .pomo-layout { grid-template-columns: 1fr; }
 }
+/* Fix for invisible text in rich text toolbar dropdowns */
+.sm-tb-select option {
+  background-color: #1a2030; /* Matches your --surface-elevated color */
+  color: #f8fafc;            /* Matches your --text-primary color */
+}
+/* Fix for invisible text in rich text toolbar dropdowns */
+.sm-tb-select option {
+  background-color: #1a2030; /* Matches your --surface-elevated color */
+  color: #f8fafc;            /* Matches your --text-primary color */
+}
