@@ -205,30 +205,37 @@ function updateCloudUI(status, msg = '') {
   }
 }
 
-function scheduleCloudSync() {
-  if (!googleAccessToken) return;
-  updateCloudUI('pending');
-  clearTimeout(debounceSaveTimeout);
-  debounceSaveTimeout = setTimeout(pushToDrive, 2500); // 2.5 second delay debounce
-}
-
 async function pushToDrive() {
   if (!googleAccessToken) return;
   updateCloudUI('syncing');
 
   try {
+    // 1. Search for an existing backup file slot
     const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name='${BACKUP_FILE_NAME}'+and+'appDataFolder'+in+parents&spaces=appDataFolder`;
     const searchRes = await fetch(searchUrl, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
     const { files } = await searchRes.json();
 
     const metadata = { name: BACKUP_FILE_NAME, parents: ['appDataFolder'] };
-    const formData = new FormData();
-    formData.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
-    formData.append('file', new Blob([JSON.stringify(state)], { type: 'application/json' }));
+    const fileContent = JSON.stringify(state);
+
+    // 2. Build a native multipart request string instead of using FormData()
+    const boundary = '-------314159265358979323846';
+    const delimiter = `\r\n--${boundary}\r\n`;
+    const closeDelim = `\r\n--${boundary}--`;
+
+    const multipartRequestBody =
+      delimiter +
+      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+      JSON.stringify(metadata) +
+      delimiter +
+      'Content-Type: application/json\r\n\r\n' +
+      fileContent +
+      closeDelim;
 
     let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
     let method = 'POST';
 
+    // If file exists, update it instead of producing duplicates
     if (files && files.length > 0) {
       url = `https://www.googleapis.com/upload/drive/v3/files/${files[0].id}?uploadType=multipart`;
       method = 'PATCH';
@@ -236,14 +243,20 @@ async function pushToDrive() {
 
     const uploadResponse = await fetch(url, {
       method: method,
-      headers: { Authorization: `Bearer ${googleAccessToken}` },
-      body: formData
+      headers: {
+        Authorization: `Bearer ${googleAccessToken}`,
+        'Content-Type': `multipart/related; boundary=${boundary}`
+      },
+      body: multipartRequestBody
     });
 
     if (uploadResponse.ok) {
+      console.log("State successfully pushed to Google Drive.");
       updateCloudUI('saved');
     } else {
-      throw new Error("HTTP upload status error");
+      const errText = await uploadResponse.text();
+      console.error("Google Drive API response rejection text:", errText);
+      throw new Error("Google Cloud save rejected formatting template parameters.");
     }
   } catch (err) {
     console.error("Cloud synchronization push failure:", err);
@@ -259,13 +272,18 @@ async function pullFromDrive() {
     const { files } = await response.json();
 
     if (files && files.length > 0) {
-      if(confirm("Cloud backup instance found on Google Drive. Do you want to restore it? (This replaces your local runtime state)")) {
+      if (confirm("Cloud backup instance found on Google Drive. Do you want to restore it? (This replaces your local runtime state)")) {
         const downloadUrl = `https://www.googleapis.com/drive/v3/files/${files[0].id}?alt=media`;
         const fileResponse = await fetch(downloadUrl, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
+        
+        if (!fileResponse.ok) throw new Error("Failed to read remote backup payload stream.");
+        
         const remoteState = await fileResponse.json();
         
+        // Merge the downloaded state, making sure we preserve the userName if missing
         state = Object.assign({}, state, remoteState);
         localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+        
         renderAll();
         checkOnboardingRequirement();
         showToast("Data pulled from Drive successfully! 🔄");
