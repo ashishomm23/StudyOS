@@ -27,7 +27,10 @@ const STORAGE_KEY = 'studyos_data_v1';
 const GOOGLE_CLIENT_ID = "574648378648-9fg7bqi4jj4giuk737b02ocif642kg3i.apps.googleusercontent.com"; 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const BACKUP_FILE_NAME = "study_os_cloud_sync.json";
-const SIGNED_IN_FLAG_KEY = "studyos_drive_connected"; 
+
+// Precise state tracking keys
+const TOKEN_STORAGE_KEY = "studyos_drive_token";
+const TOKEN_EXPIRY_KEY = "studyos_drive_token_expiry";
 
 let tokenClient = null; 
 let googleAccessToken = null;
@@ -44,44 +47,58 @@ function initGoogleDriveAuth() {
     tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       scope: DRIVE_SCOPE,
-      // If signed in flag is true, use 'none' for a zero-popup silent check
-      prompt: localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true' ? 'none' : 'consent',
+      prompt: 'consent', // Keep cleanly configured for interactive clicks
       callback: async (tokenResponse) => {
         if (tokenResponse.access_token) {
           googleAccessToken = tokenResponse.access_token;
-          localStorage.setItem(SIGNED_IN_FLAG_KEY, 'true'); 
+          
+          // Calculate precise token death window (Google tokens live exactly 3600 seconds)
+          const expiryTime = Date.now() + (parseInt(tokenResponse.expires_in) || 3600) * 1000;
+          
+          // Save parameters firmly into persistent storage
+          localStorage.setItem(TOKEN_STORAGE_KEY, googleAccessToken);
+          localStorage.setItem(TOKEN_EXPIRY_KEY, expiryTime);
+          
           updateCloudUI('saved');
           await pullFromDrive();
         }
       },
       error_callback: (err) => {
-        console.warn("Background authentication check response:", err);
-        if (err.error === 'immediate_failed' || err.error === 'interaction_required') {
-          // Fall back gracefully to idle state so user can connect manually
-          updateCloudUI('idle');
-        }
+        console.warn("Google Auth Engine Client Exception:", err);
+        updateCloudUI('idle');
       }
     });
 
+    // Rebind clicking behaviors cleanly
     const authBtn = document.getElementById('googleDriveAuthBtn');
     if (authBtn) {
       authBtn.replaceWith(authBtn.cloneNode(true)); 
-      
       document.getElementById('googleDriveAuthBtn').addEventListener('click', () => {
         if (tokenClient) {
-          // Physical clicks always force interaction options
-          tokenClient.requestAccessToken({ prompt: 'consent' });
+          tokenClient.requestAccessToken();
         } else {
           showToast("Google client initialization error. Check Client ID.");
         }
       });
     }
 
-    // AUTO-LOGIN TRIGGER ON REFRESH
-    if (localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true') {
-      console.log("Restoring previous cloud sync session silently...");
-      updateCloudUI('syncing');
-      tokenClient.requestAccessToken({ prompt: 'none' });
+    // AUTO-RESTORE LOGIC ON REFRESH (Bypasses silent prompt security blocks)
+    const savedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
+    const expiryTime = localStorage.getItem(TOKEN_EXPIRY_KEY);
+
+    if (savedToken && expiryTime && Date.now() < parseInt(expiryTime)) {
+      console.log("Valid active token cache verified. Restoring connection seamlessly!");
+      googleAccessToken = savedToken;
+      updateCloudUI('saved');
+      
+      // Quietly read updates to check for modifications made on other devices
+      setTimeout(pullFromDrive, 800);
+    } else {
+      console.log("No token present or cache has expired. Standing by for connection click.");
+      // Clear out any old dead tokens to keep storage clean
+      localStorage.removeItem(TOKEN_STORAGE_KEY);
+      localStorage.removeItem(TOKEN_EXPIRY_KEY);
+      updateCloudUI('idle');
     }
 
   } catch (err) {
