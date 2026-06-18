@@ -91,6 +91,33 @@ async function deleteFileFromIndexedDB(fileId) {
   }
 }
 
+/* ===================== CLOUD SYNC HELPERS ===================== */
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return (bytes / Math.pow(k, i)).toFixed(1).replace(/\.0$/, '') + ' ' + sizes[i];
+}
+
+function logCloudEvent(level, message, data) {
+  const prefix = `[CloudSync:${level}]`;
+  if (data !== undefined) {
+    console.log(prefix, message, data);
+  } else {
+    console.log(prefix, message);
+  }
+}
+
+function scheduleCloudSync() {
+  if (!googleAccessToken) return;
+  clearTimeout(debounceSaveTimeout);
+  debounceSaveTimeout = setTimeout(() => {
+    pushToDrive();
+  }, 3000);
+}
+
 /* ===================== AUTH INITIALIZATION ===================== */
 
 function initGoogleDriveAuth() {
@@ -415,28 +442,30 @@ async function pullFromDrive() {
     if (files && files.length > 0) {
       const file = files[0];
       logCloudEvent('INFO', `Found backup: ${file.name} (modified: ${file.modifiedTime})`);
-      
-      if (confirm("Cloud backup found. Restore it? (This will replace your local data)\n\n" + 
-                  `Last modified: ${new Date(file.modifiedTime).toLocaleString()}`)) {
-        
-        logCloudEvent('DEBUG', 'Downloading backup...');
-        
-        // STEP 2: Download file
-        const downloadUrl = `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
-        const fileResponse = await fetch(downloadUrl, { 
-          headers: { Authorization: `Bearer ${googleAccessToken}` } 
-        });
 
-        if (!fileResponse.ok) {
-          throw new Error(`Download failed: ${fileResponse.status} ${fileResponse.statusText}`);
-        }
+      logCloudEvent('DEBUG', 'Downloading backup...');
 
-        const remoteState = await fileResponse.json();
-        logCloudEvent('DEBUG', `Downloaded state with ${remoteState.subjects?.length || 0} subjects`);
+      // STEP 2: Download file
+      const downloadUrl = `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
+      const fileResponse = await fetch(downloadUrl, {
+        headers: { Authorization: `Bearer ${googleAccessToken}` }
+      });
 
+      if (!fileResponse.ok) {
+        throw new Error(`Download failed: ${fileResponse.status} ${fileResponse.statusText}`);
+      }
+
+      const remoteState = await fileResponse.json();
+      logCloudEvent('DEBUG', `Downloaded state with ${remoteState.subjects?.length || 0} subjects`);
+
+      // Only restore if remote data has more content than local (safe merge)
+      const remoteSubjectCount = remoteState.subjects?.length || 0;
+      const localSubjectCount = state.subjects?.length || 0;
+
+      if (remoteSubjectCount > 0 || localSubjectCount === 0) {
         // STEP 3: Restore
         state = Object.assign({}, state, remoteState);
-        
+
         // Populate IndexedDB with file data
         if (state.studyUploads && state.studyUploads.length > 0) {
           logCloudEvent('DEBUG', `Restoring ${state.studyUploads.length} uploaded files to local storage...`);
@@ -450,9 +479,12 @@ async function pullFromDrive() {
         saveState();
         renderAll();
         checkOnboardingRequirement();
-        
+
         logCloudEvent('SUCCESS', 'Cloud backup restored!');
-        showToast("Data pulled from Drive successfully! 🔄");
+        showToast("☁️ Data synced from Drive successfully!");
+      } else {
+        logCloudEvent('INFO', 'Local data is more recent — skipping overwrite');
+        showToast("☁️ Drive backup checked — local data kept");
       }
     } else {
       logCloudEvent('INFO', 'No backup found. Creating new one...');
@@ -485,14 +517,7 @@ window.checkCloudAuth = function() {
   console.log('  pullFromDrive() -> Load from Drive');
 };
 
-// Helper function (if not already defined in your code)
-function formatBytes(bytes) {
-  if (bytes === 0) return '0 Bytes';
-  const k = 1024;
-  const sizes = ['Bytes', 'KB', 'MB'];
-  const i = Math.floor(Math.log(bytes) / Math.log(k));
-  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
-}
+// formatBytes is defined in the Study Material section below
 
 /* ===================== EXPLICIT UNLOAD GUARD LOCK ===================== */
 window.addEventListener('beforeunload', (e) => {
@@ -1875,12 +1900,7 @@ function getFileIcon(mime) {
   return '📎';
 }
 
-function formatBytes(bytes) {
-  if (!bytes) return '';
-  if (bytes < 1024) return bytes + ' B';
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
-  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
-}
+// formatBytes is defined above in Cloud Sync Helpers
 
 function initStudyMaterial() {
   const docBtn = document.getElementById('smNewDocBtn');
