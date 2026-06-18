@@ -272,29 +272,6 @@ function updateCloudUI(status, msg = '') {
    Now with actual error messages you can see!
    ============================================================ */
 
-// Add this BEFORE your other cloud sync code
-
-function logCloudEvent(level, message, data = null) {
-  const timestamp = new Date().toLocaleTimeString();
-  const prefix = `[${timestamp}] 🌐 Cloud:`;
-  console.log(`${prefix} [${level}]`, message, data || '');
-  
-  // Also show critical errors as toasts
-  if (level === 'ERROR' && typeof showToast === 'function') {
-    showToast(`⚠️ Cloud sync: ${message}`);
-  }
-}
-
-function scheduleCloudSync() {
-  if (!googleAccessToken) {
-    logCloudEvent('WARN', 'No access token. Cloud sync skipped.');
-    return;
-  }
-  updateCloudUI('pending');
-  clearTimeout(debounceSaveTimeout);
-  debounceSaveTimeout = setTimeout(pushToDrive, 2500); 
-}
-
 async function pushToDrive() {
   if (!googleAccessToken) {
     logCloudEvent('WARN', 'No token available for push');
@@ -305,10 +282,8 @@ async function pushToDrive() {
   logCloudEvent('INFO', 'Starting push to Google Drive...');
 
   try {
-    // STEP 1: Check if file exists
     logCloudEvent('DEBUG', 'Searching for existing backup file...');
     
-    // FIX: Use proper URL encoding and simpler query
     const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name%3D%27${encodeURIComponent(BACKUP_FILE_NAME)}%27+and+trashed%3Dfalse&spaces=appDataFolder&fields=files(id,name,mimeType)`;
     
     const searchRes = await fetch(searchUrl, { 
@@ -326,7 +301,6 @@ async function pushToDrive() {
     const files = searchData.files || [];
     logCloudEvent('INFO', `Found ${files.length} existing backup file(s)`);
 
-    // STEP 2: Prepare payload
     logCloudEvent('DEBUG', 'Preparing payload...');
     
     const deepStudyUploads = [];
@@ -343,20 +317,39 @@ async function pushToDrive() {
     
     logCloudEvent('DEBUG', `Payload size: ${formatBytes(new Blob([fileContent]).size)}`);
 
-    // STEP 3: Build multipart request
     logCloudEvent('DEBUG', 'Building multipart request...');
     
-    const metadata = { 
-      name: BACKUP_FILE_NAME, 
-      mimeType: 'application/json'
-      // parents only needed for POST, not PATCH
-    };
-
     const boundary = '===============' + Date.now() + '===============';
     const delimiter = `--${boundary}`;
     const closeDelim = `--${boundary}--`;
 
-    // Properly formatted multipart body
+    // ✅ FIX: Different metadata for POST vs PATCH
+    let metadata;
+    let url;
+    let method;
+
+    if (files && files.length > 0) {
+      // PATCH request (updating existing file) - NO parents field!
+      const fileId = files[0].id;
+      metadata = { 
+        name: BACKUP_FILE_NAME, 
+        mimeType: 'application/json'
+      };
+      url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id,name,webViewLink`;
+      method = 'PATCH';
+      logCloudEvent('DEBUG', `Updating existing file: ${fileId}`);
+    } else {
+      // POST request (creating new file) - include parents
+      metadata = { 
+        name: BACKUP_FILE_NAME, 
+        mimeType: 'application/json',
+        parents: ['appDataFolder']
+      };
+      url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink';
+      method = 'POST';
+      logCloudEvent('DEBUG', 'Creating new backup file');
+    }
+
     const multipartBody = 
       `${delimiter}\r\nContent-Type: application/json; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n` +
       JSON.stringify(metadata) +
@@ -364,19 +357,7 @@ async function pushToDrive() {
       fileContent +
       `\r\n${closeDelim}`;
 
-    // STEP 4: Upload
     logCloudEvent('DEBUG', 'Uploading to Drive...');
-    
-    let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink';
-    let method = 'POST';
-
-    if (files && files.length > 0) {
-      const fileId = files[0].id;
-      // ✅ FIXED: Use addParents parameter for PATCH instead of parents in metadata
-      url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&addParents=appDataFolder&fields=id,name,webViewLink`;
-      method = 'PATCH';
-      logCloudEvent('DEBUG', `Updating existing file: ${fileId}`);
-    }
 
     const uploadResponse = await fetch(url, {
       method: method,
