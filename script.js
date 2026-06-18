@@ -27,6 +27,7 @@ const STORAGE_KEY = 'studyos_data_v1';
 const GOOGLE_CLIENT_ID = "574648378648-9fg7bqi4jj4giuk737b02ocif642kg3i.apps.googleusercontent.com"; // Provide OAuth client ID here
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const BACKUP_FILE_NAME = "study_os_cloud_sync.json";
+const SIGNED_IN_FLAG_KEY = "studyos_drive_connected";
 
 let tokenClient = null;
 let googleAccessToken = null;
@@ -133,9 +134,7 @@ function updateCloudUI(status, msg = '') {
 }
 
  function initGoogleDriveAuth() {
-  // If the script hasn't loaded yet, wait 500ms and try again
   if (typeof window.google === 'undefined' || typeof window.google.accounts === 'undefined') {
-    console.log("Waiting for Google Identity Services script to load...");
     setTimeout(initGoogleDriveAuth, 500);
     return;
   }
@@ -144,15 +143,53 @@ function updateCloudUI(status, msg = '') {
     tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       scope: DRIVE_SCOPE,
+      // Change prompt to 'none' for seamless background token acquisition
+      prompt: localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true' ? '' : 'consent',
       callback: async (tokenResponse) => {
         if (tokenResponse.access_token) {
           googleAccessToken = tokenResponse.access_token;
-          showToast("Authenticated with Google Drive! ☁️");
-          updateCloudUI('syncing');
+          
+          // Set our flag so the app remembers we are connected[cite: 2]
+          localStorage.setItem(SIGNED_IN_FLAG_KEY, 'true'); 
+          
+          updateCloudUI('saved');
           await pullFromDrive();
         }
       },
+      error_callback: (err) => {
+        // If background renewal fails, clear flag and let user click manually
+        if (err.error === 'immediate_failed') {
+          localStorage.removeItem(SIGNED_IN_FLAG_KEY);
+          updateCloudUI('idle');
+        }
+      }
     });
+
+    const authBtn = document.getElementById('googleDriveAuthBtn');
+    if (authBtn) {
+      authBtn.replaceWith(authBtn.cloneNode(true)); 
+      
+      document.getElementById('googleDriveAuthBtn').addEventListener('click', () => {
+        if (tokenClient) {
+          // Force prompt consent on a manual user click interaction
+          tokenClient.requestAccessToken({ prompt: 'consent' });
+        } else {
+          showToast("Google client initialization error. Check Client ID.");
+        }
+      });
+    }
+
+    // AUTO-LOGIN TRIGGER: If they logged in previously, request a token silently right now![cite: 2]
+    if (localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true') {
+      console.log("Restoring previous cloud sync session...");
+      updateCloudUI('syncing');
+      tokenClient.requestAccessToken({ hint: 'skip_prompt' });
+    }
+
+  } catch (err) {
+    console.error("Failed to initialize Google Auth client:", err);
+  }
+}
 
     // Explicitly attach the click handler here to ensure it's bound correctly
     const authBtn = document.getElementById('googleDriveAuthBtn');
