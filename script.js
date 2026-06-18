@@ -265,55 +265,114 @@ function updateCloudUI(status, msg = '') {
   }
 }
 
+/* ============================================================
+   CLOUD SYNC ENGINE - DEBUGGED VERSION
+   Now with actual error messages you can see!
+   ============================================================ */
+
+// Add this BEFORE your other cloud sync code
+
+function logCloudEvent(level, message, data = null) {
+  const timestamp = new Date().toLocaleTimeString();
+  const prefix = `[${timestamp}] 🌐 Cloud:`;
+  console.log(`${prefix} [${level}]`, message, data || '');
+  
+  // Also show critical errors as toasts
+  if (level === 'ERROR' && typeof showToast === 'function') {
+    showToast(`⚠️ Cloud sync: ${message}`);
+  }
+}
+
 function scheduleCloudSync() {
-  if (!googleAccessToken) return;
+  if (!googleAccessToken) {
+    logCloudEvent('WARN', 'No access token. Cloud sync skipped.');
+    return;
+  }
   updateCloudUI('pending');
   clearTimeout(debounceSaveTimeout);
   debounceSaveTimeout = setTimeout(pushToDrive, 2500); 
 }
 
 async function pushToDrive() {
-  if (!googleAccessToken) return;
+  if (!googleAccessToken) {
+    logCloudEvent('WARN', 'No token available for push');
+    return;
+  }
+  
   updateCloudUI('syncing');
+  logCloudEvent('INFO', 'Starting push to Google Drive...');
 
   try {
-    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name='${BACKUP_FILE_NAME}'+and+'appDataFolder'+in+parents&spaces=appDataFolder`;
-    const searchRes = await fetch(searchUrl, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
-    const { files } = await searchRes.json();
+    // STEP 1: Check if file exists
+    logCloudEvent('DEBUG', 'Searching for existing backup file...');
+    
+    // FIX: Use proper URL encoding and simpler query
+    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name%3D%27${encodeURIComponent(BACKUP_FILE_NAME)}%27+and+trashed%3Dfalse&spaces=appDataFolder&fields=files(id,name,mimeType)`;
+    
+    const searchRes = await fetch(searchUrl, { 
+      headers: { Authorization: `Bearer ${googleAccessToken}` },
+      method: 'GET'
+    });
 
-    // Rehydrate any missing file data URLs from IndexedDB into the final cloud package
+    if (!searchRes.ok) {
+      throw new Error(`Search failed: ${searchRes.status} ${searchRes.statusText}`);
+    }
+
+    const searchData = await searchRes.json();
+    logCloudEvent('DEBUG', `Search result:`, searchData);
+    
+    const files = searchData.files || [];
+    logCloudEvent('INFO', `Found ${files.length} existing backup file(s)`);
+
+    // STEP 2: Prepare payload
+    logCloudEvent('DEBUG', 'Preparing payload...');
+    
     const deepStudyUploads = [];
     for (let u of state.studyUploads) {
       let dataUrl = u.dataUrl;
       if (!dataUrl) {
+        logCloudEvent('DEBUG', `Fetching IndexedDB data for upload: ${u.id}`);
         dataUrl = await getFileFromIndexedDB(u.id);
       }
       deepStudyUploads.push({ ...u, dataUrl });
     }
     const fullyHydratedState = { ...state, studyUploads: deepStudyUploads };
-
-    const metadata = { name: BACKUP_FILE_NAME, parents: ['appDataFolder'] };
     const fileContent = JSON.stringify(fullyHydratedState);
+    
+    logCloudEvent('DEBUG', `Payload size: ${formatBytes(new Blob([fileContent]).size)}`);
 
-    const boundary = '-------314159265358979323846';
-    const delimiter = `\r\n--${boundary}\r\n`;
-    const closeDelim = `\r\n--${boundary}--`;
+    // STEP 3: Build multipart request
+    logCloudEvent('DEBUG', 'Building multipart request...');
+    
+    const metadata = { 
+      name: BACKUP_FILE_NAME, 
+      mimeType: 'application/json',
+      parents: ['appDataFolder'] 
+    };
 
-    const multipartRequestBody =
-      delimiter +
-      'Content-Type: application/json; charset=UTF-8\r\n\r\n' +
+    const boundary = '===============' + Date.now() + '===============';
+    const delimiter = `--${boundary}`;
+    const closeDelim = `--${boundary}--`;
+
+    // Properly formatted multipart body
+    const multipartBody = 
+      `${delimiter}\r\nContent-Type: application/json; charset=UTF-8\r\nContent-Transfer-Encoding: 8bit\r\n\r\n` +
       JSON.stringify(metadata) +
-      delimiter +
-      'Content-Type: application/json\r\n\r\n' +
+      `\r\n${delimiter}\r\nContent-Type: application/json\r\nContent-Transfer-Encoding: 8bit\r\n\r\n` +
       fileContent +
-      closeDelim;
+      `\r\n${closeDelim}`;
 
-    let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
+    // STEP 4: Upload
+    logCloudEvent('DEBUG', 'Uploading to Drive...');
+    
+    let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink';
     let method = 'POST';
 
     if (files && files.length > 0) {
-      url = `https://www.googleapis.com/upload/drive/v3/files/${files[0].id}?uploadType=multipart`;
+      const fileId = files[0].id;
+      url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id,name,webViewLink`;
       method = 'PATCH';
+      logCloudEvent('DEBUG', `Updating existing file: ${fileId}`);
     }
 
     const uploadResponse = await fetch(url, {
@@ -322,37 +381,81 @@ async function pushToDrive() {
         Authorization: `Bearer ${googleAccessToken}`,
         'Content-Type': `multipart/related; boundary=${boundary}`
       },
-      body: multipartRequestBody
+      body: multipartBody
     });
 
-    if (uploadResponse.ok) {
-      updateCloudUI('saved');
-    } else {
-      throw new Error("Google API payload rejection.");
+    const uploadData = await uploadResponse.json();
+    logCloudEvent('DEBUG', `Upload response:`, uploadData);
+
+    if (!uploadResponse.ok) {
+      throw new Error(`Upload failed: ${uploadResponse.status} - ${uploadData.error?.message || 'Unknown error'}`);
     }
+
+    logCloudEvent('SUCCESS', `Backup saved to Drive: ${uploadData.webViewLink || uploadData.id}`);
+    updateCloudUI('saved');
+    
   } catch (err) {
-    console.error("Cloud synchronization push failure:", err);
-    updateCloudUI('error', 'Cloud save failed');
+    logCloudEvent('ERROR', `Push failed: ${err.message}`, err);
+    updateCloudUI('error', err.message);
   }
 }
 
 async function pullFromDrive() {
-  if (!googleAccessToken) return;
+  if (!googleAccessToken) {
+    logCloudEvent('WARN', 'No token available for pull');
+    return;
+  }
+  
+  logCloudEvent('INFO', 'Starting pull from Google Drive...');
+  
   try {
-    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name='${BACKUP_FILE_NAME}'+and+'appDataFolder'+in+parents&spaces=appDataFolder`;
-    const response = await fetch(searchUrl, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
-    const { files } = await response.json();
+    // STEP 1: Search for backup
+    logCloudEvent('DEBUG', 'Searching for backup file...');
+    
+    const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name%3D%27${encodeURIComponent(BACKUP_FILE_NAME)}%27+and+trashed%3Dfalse&spaces=appDataFolder&fields=files(id,name,createdTime,modifiedTime)`;
+    
+    const response = await fetch(searchUrl, { 
+      headers: { Authorization: `Bearer ${googleAccessToken}` },
+      method: 'GET'
+    });
+
+    if (!response.ok) {
+      throw new Error(`Search failed: ${response.status} ${response.statusText}`);
+    }
+
+    const searchData = await response.json();
+    logCloudEvent('DEBUG', `Search result:`, searchData);
+    
+    const files = searchData.files || [];
 
     if (files && files.length > 0) {
-      if(confirm("Cloud backup instance found on Google Drive. Do you want to restore it? (This replaces your local runtime state)")) {
-        const downloadUrl = `https://www.googleapis.com/drive/v3/files/${files[0].id}?alt=media`;
-        const fileResponse = await fetch(downloadUrl, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
-        const remoteState = await fileResponse.json();
+      const file = files[0];
+      logCloudEvent('INFO', `Found backup: ${file.name} (modified: ${file.modifiedTime})`);
+      
+      if (confirm("Cloud backup found. Restore it? (This will replace your local data)\n\n" + 
+                  `Last modified: ${new Date(file.modifiedTime).toLocaleString()}`)) {
         
+        logCloudEvent('DEBUG', 'Downloading backup...');
+        
+        // STEP 2: Download file
+        const downloadUrl = `https://www.googleapis.com/drive/v3/files/${file.id}?alt=media`;
+        const fileResponse = await fetch(downloadUrl, { 
+          headers: { Authorization: `Bearer ${googleAccessToken}` } 
+        });
+
+        if (!fileResponse.ok) {
+          throw new Error(`Download failed: ${fileResponse.status} ${fileResponse.statusText}`);
+        }
+
+        const remoteState = await fileResponse.json();
+        logCloudEvent('DEBUG', `Downloaded state with ${remoteState.subjects?.length || 0} subjects`);
+
+        // STEP 3: Restore
         state = Object.assign({}, state, remoteState);
         
-        // Populate local high-capacity storage
+        // Populate IndexedDB with file data
         if (state.studyUploads && state.studyUploads.length > 0) {
+          logCloudEvent('DEBUG', `Restoring ${state.studyUploads.length} uploaded files to local storage...`);
           for (let u of state.studyUploads) {
             if (u.dataUrl) {
               await saveFileToIndexedDB(u.id, u.dataUrl);
@@ -363,17 +466,48 @@ async function pullFromDrive() {
         saveState();
         renderAll();
         checkOnboardingRequirement();
+        
+        logCloudEvent('SUCCESS', 'Cloud backup restored!');
         showToast("Data pulled from Drive successfully! 🔄");
       }
     } else {
-      showToast("No existing cloud backup found. Initializing a clean slot.");
+      logCloudEvent('INFO', 'No backup found. Creating new one...');
+      showToast("No cloud backup found. Creating a new one...");
       await pushToDrive();
     }
+    
     updateCloudUI('saved');
+    
   } catch (err) {
-    console.error("Cloud data fetch pull failure:", err);
-    updateCloudUI('error', 'Cloud sync import failed');
+    logCloudEvent('ERROR', `Pull failed: ${err.message}`, err);
+    updateCloudUI('error', err.message);
   }
+}
+
+/* ===================== DIAGNOSTIC HELPER ===================== */
+// Call this in browser console to debug: checkCloudAuth()
+
+window.checkCloudAuth = function() {
+  console.log('=== CLOUD SYNC DIAGNOSTIC ===');
+  console.log('✓ Access Token:', googleAccessToken ? '✓ Present' : '✗ Missing');
+  console.log('✓ Token Valid Until:', new Date(parseInt(localStorage.getItem(TOKEN_EXPIRY_KEY))).toLocaleString());
+  console.log('✓ Client ID:', GOOGLE_CLIENT_ID);
+  console.log('✓ Drive Scope:', DRIVE_SCOPE);
+  console.log('✓ Backup Filename:', BACKUP_FILE_NAME);
+  console.log('✓ Cloud Status:', cloudSyncStatus);
+  console.log('✓ State Size:', formatBytes(new Blob([JSON.stringify(state)]).size));
+  console.log('\nTo test cloud sync manually:');
+  console.log('  pushToDrive()  -> Save to Drive');
+  console.log('  pullFromDrive() -> Load from Drive');
+};
+
+// Helper function (if not already defined in your code)
+function formatBytes(bytes) {
+  if (bytes === 0) return '0 Bytes';
+  const k = 1024;
+  const sizes = ['Bytes', 'KB', 'MB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return Math.round(bytes / Math.pow(k, i) * 100) / 100 + ' ' + sizes[i];
 }
 
 /* ===================== EXPLICIT UNLOAD GUARD LOCK ===================== */
