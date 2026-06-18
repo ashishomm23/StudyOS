@@ -24,7 +24,7 @@ let state = {
 const STORAGE_KEY = 'studyos_data_v1';
 
 /* ===================== CLOUD SYNC CONFIGURATION ===================== */
-const GOOGLE_CLIENT_ID = "YOUR_GOOGLE_CLIENT_ID.apps.googleusercontent.com"; 
+const GOOGLE_CLIENT_ID = "574648378648-9fg7bqi4jj4giuk737b02ocif642kg3i.apps.googleusercontent.com"; 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const BACKUP_FILE_NAME = "study_os_cloud_sync.json";
 const SIGNED_IN_FLAG_KEY = "studyos_drive_connected"; 
