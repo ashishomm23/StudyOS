@@ -140,18 +140,20 @@ function initGoogleDriveAuth() {
     const expiryTime = localStorage.getItem(TOKEN_EXPIRY_KEY);
 
     if (savedToken && expiryTime && Date.now() < parseInt(expiryTime)) {
+      // Token still valid - use it
       googleAccessToken = savedToken;
       updateCloudUI('saved');
       setTimeout(pullFromDrive, 500);
     } else {
+      // Token expired or missing - clear it
       localStorage.removeItem(TOKEN_STORAGE_KEY);
       localStorage.removeItem(TOKEN_EXPIRY_KEY);
-      if (localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true') {
-        updateCloudUI('syncing');
-        tokenClient.requestAccessToken({ prompt: 'none' });
-      } else {
-        updateCloudUI('idle');
-      }
+      localStorage.removeItem(SIGNED_IN_FLAG_KEY);
+      
+      // ✅ CHANGED: Don't try to auto-login silently
+      // Just show the login button and wait for user to click it
+      updateCloudUI('idle');
+      showToast('Please sign in to Google Drive to enable cloud sync');
     }
 
   } catch (err) {
