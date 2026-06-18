@@ -133,7 +133,7 @@ function updateCloudUI(status, msg = '') {
   }
 }
 
- function initGoogleDriveAuth() {
+function initGoogleDriveAuth() {
   if (typeof window.google === 'undefined' || typeof window.google.accounts === 'undefined') {
     setTimeout(initGoogleDriveAuth, 500);
     return;
@@ -186,27 +186,6 @@ function updateCloudUI(status, msg = '') {
       tokenClient.requestAccessToken({ hint: 'skip_prompt' });
     }
 
-  } catch (err) {
-    console.error("Failed to initialize Google Auth client:", err);
-  }
-}
-
-    // Explicitly attach the click handler here to ensure it's bound correctly
-    const authBtn = document.getElementById('googleDriveAuthBtn');
-    if (authBtn) {
-      // Remove any existing listeners first to prevent duplicates
-      authBtn.replaceWith(authBtn.cloneNode(true)); 
-      
-      // Re-fetch and bind
-      document.getElementById('googleDriveAuthBtn').addEventListener('click', () => {
-        if (tokenClient) {
-          tokenClient.requestAccessToken({ prompt: 'consent' });
-        } else {
-          showToast("Google client initialization error. Check Client ID.");
-        }
-      });
-    }
-    console.log("Google Drive Auth engine successfully initialized.");
   } catch (err) {
     console.error("Failed to initialize Google Auth client:", err);
   }
