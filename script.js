@@ -27,8 +27,9 @@ const STORAGE_KEY = 'studyos_data_v1';
 const GOOGLE_CLIENT_ID = "574648378648-9fg7bqi4jj4giuk737b02ocif642kg3i.apps.googleusercontent.com"; 
 const DRIVE_SCOPE = "https://www.googleapis.com/auth/drive.appdata";
 const BACKUP_FILE_NAME = "study_os_cloud_sync.json";
+const SIGNED_IN_FLAG_KEY = "studyos_drive_connected"; 
 
-// Precise state tracking keys
+// Precise session tokens
 const TOKEN_STORAGE_KEY = "studyos_drive_token";
 const TOKEN_EXPIRY_KEY = "studyos_drive_token_expiry";
 
@@ -36,6 +37,61 @@ let tokenClient = null;
 let googleAccessToken = null;
 let cloudSyncStatus = 'idle'; 
 let debounceSaveTimeout = null;
+
+/* ===================== LOCAL HIGH-CAPACITY DATABASE (INDEXEDDB) ===================== */
+const DB_NAME = "StudyOS_Local_Storage";
+const DB_VERSION = 1;
+const STORE_NAME = "heavy_uploads";
+
+function getDB() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, DB_VERSION);
+    request.onupgradeneeded = (e) => {
+      const db = e.target.result;
+      if (!db.objectStoreNames.contains(STORE_NAME)) {
+        db.createObjectStore(STORE_NAME, { keyPath: "id" });
+      }
+    };
+    request.onsuccess = (e) => resolve(e.target.result);
+    request.onerror = (e) => reject(e.target.error);
+  });
+}
+
+async function saveFileToIndexedDB(fileId, dataUrl) {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).put({ id: fileId, dataUrl: dataUrl });
+  } catch (err) {
+    console.error("Local high-capacity storage write error:", err);
+  }
+}
+
+async function getFileFromIndexedDB(fileId) {
+  try {
+    const db = await getDB();
+    return new Promise((resolve) => {
+      const tx = db.transaction(STORE_NAME, "readonly");
+      const request = tx.objectStore(STORE_NAME).get(fileId);
+      request.onsuccess = () => resolve(request.result ? request.result.dataUrl : "");
+      request.onerror = () => resolve("");
+    });
+  } catch (err) {
+    return "";
+  }
+}
+
+async function deleteFileFromIndexedDB(fileId) {
+  try {
+    const db = await getDB();
+    const tx = db.transaction(STORE_NAME, "readwrite");
+    tx.objectStore(STORE_NAME).delete(fileId);
+  } catch (err) {
+    console.error("Local high-capacity storage deletion error:", err);
+  }
+}
+
+/* ===================== AUTH INITIALIZATION ===================== */
 
 function initGoogleDriveAuth() {
   if (typeof window.google === 'undefined' || typeof window.google.accounts === 'undefined') {
@@ -47,58 +103,55 @@ function initGoogleDriveAuth() {
     tokenClient = window.google.accounts.oauth2.initTokenClient({
       client_id: GOOGLE_CLIENT_ID,
       scope: DRIVE_SCOPE,
-      prompt: 'consent', // Keep cleanly configured for interactive clicks
+      prompt: localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true' ? 'none' : 'consent',
       callback: async (tokenResponse) => {
         if (tokenResponse.access_token) {
           googleAccessToken = tokenResponse.access_token;
           
-          // Calculate precise token death window (Google tokens live exactly 3600 seconds)
           const expiryTime = Date.now() + (parseInt(tokenResponse.expires_in) || 3600) * 1000;
-          
-          // Save parameters firmly into persistent storage
           localStorage.setItem(TOKEN_STORAGE_KEY, googleAccessToken);
           localStorage.setItem(TOKEN_EXPIRY_KEY, expiryTime);
+          localStorage.setItem(SIGNED_IN_FLAG_KEY, 'true');
           
           updateCloudUI('saved');
           await pullFromDrive();
         }
       },
       error_callback: (err) => {
-        console.warn("Google Auth Engine Client Exception:", err);
-        updateCloudUI('idle');
+        console.warn("Google Auth handshaking exception:", err);
+        if (err.error === 'immediate_failed' || err.error === 'interaction_required') {
+          updateCloudUI('idle');
+        }
       }
     });
 
-    // Rebind clicking behaviors cleanly
     const authBtn = document.getElementById('googleDriveAuthBtn');
     if (authBtn) {
       authBtn.replaceWith(authBtn.cloneNode(true)); 
       document.getElementById('googleDriveAuthBtn').addEventListener('click', () => {
         if (tokenClient) {
-          tokenClient.requestAccessToken();
-        } else {
-          showToast("Google client initialization error. Check Client ID.");
+          tokenClient.requestAccessToken({ prompt: 'consent' });
         }
       });
     }
 
-    // AUTO-RESTORE LOGIC ON REFRESH (Bypasses silent prompt security blocks)
+    // AUTO-RESTORE IN-MEMORY SESSION ON REFRESH
     const savedToken = localStorage.getItem(TOKEN_STORAGE_KEY);
     const expiryTime = localStorage.getItem(TOKEN_EXPIRY_KEY);
 
     if (savedToken && expiryTime && Date.now() < parseInt(expiryTime)) {
-      console.log("Valid active token cache verified. Restoring connection seamlessly!");
       googleAccessToken = savedToken;
       updateCloudUI('saved');
-      
-      // Quietly read updates to check for modifications made on other devices
-      setTimeout(pullFromDrive, 800);
+      setTimeout(pullFromDrive, 500);
     } else {
-      console.log("No token present or cache has expired. Standing by for connection click.");
-      // Clear out any old dead tokens to keep storage clean
       localStorage.removeItem(TOKEN_STORAGE_KEY);
       localStorage.removeItem(TOKEN_EXPIRY_KEY);
-      updateCloudUI('idle');
+      if (localStorage.getItem(SIGNED_IN_FLAG_KEY) === 'true') {
+        updateCloudUI('syncing');
+        tokenClient.requestAccessToken({ prompt: 'none' });
+      } else {
+        updateCloudUI('idle');
+      }
     }
 
   } catch (err) {
@@ -112,23 +165,30 @@ function genId() {
   return Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 }
 
-// Local save wrapped with active debouncer cloud push engine
 function saveState() {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    // Keep standard browser storage light by decoupling heavy strings before saving locally
+    const minimizedState = {
+      ...state,
+      studyUploads: state.studyUploads.map(u => ({
+        id: u.id,
+        name: u.name,
+        mimeType: u.mimeType,
+        size: u.size,
+        uploadedAt: u.uploadedAt,
+        subjectId: u.subjectId,
+        dataUrl: "" 
+      }))
+    };
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(minimizedState));
     scheduleCloudSync();
   } catch(e) {
-    try {
-      const lightState = { ...state, studyUploads: state.studyUploads.map(u => ({ ...u, dataUrl: u.dataUrl })) };
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(lightState));
-      scheduleCloudSync();
-    } catch(e2) {
-      showToast('⚠️ Storage full — some data may not be saved locally.');
-    }
+    console.error("Local write block error. Saving directly to cloud layer:", e);
+    scheduleCloudSync();
   }
 }
 
-function loadState() {
+async function loadState() {
   const raw = localStorage.getItem(STORAGE_KEY);
   if (!raw) return;
   try {
@@ -177,7 +237,7 @@ function daysUntil(dateStr) {
   return Math.round((target - today) / (1000 * 60 * 60 * 24));
 }
 
-/* ===================== CLOUD SYNC ENGINE (GOOGLE DRIVE REST API v3) ===================== */
+/* ===================== CLOUD SYNC ENGINE ===================== */
 
 function updateCloudUI(status, msg = '') {
   cloudSyncStatus = status;
@@ -205,20 +265,36 @@ function updateCloudUI(status, msg = '') {
   }
 }
 
+function scheduleCloudSync() {
+  if (!googleAccessToken) return;
+  updateCloudUI('pending');
+  clearTimeout(debounceSaveTimeout);
+  debounceSaveTimeout = setTimeout(pushToDrive, 2500); 
+}
+
 async function pushToDrive() {
   if (!googleAccessToken) return;
   updateCloudUI('syncing');
 
   try {
-    // 1. Search for an existing backup file slot
     const searchUrl = `https://www.googleapis.com/drive/v3/files?q=name='${BACKUP_FILE_NAME}'+and+'appDataFolder'+in+parents&spaces=appDataFolder`;
     const searchRes = await fetch(searchUrl, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
     const { files } = await searchRes.json();
 
-    const metadata = { name: BACKUP_FILE_NAME, parents: ['appDataFolder'] };
-    const fileContent = JSON.stringify(state);
+    // Rehydrate any missing file data URLs from IndexedDB into the final cloud package
+    const deepStudyUploads = [];
+    for (let u of state.studyUploads) {
+      let dataUrl = u.dataUrl;
+      if (!dataUrl) {
+        dataUrl = await getFileFromIndexedDB(u.id);
+      }
+      deepStudyUploads.push({ ...u, dataUrl });
+    }
+    const fullyHydratedState = { ...state, studyUploads: deepStudyUploads };
 
-    // 2. Build a native multipart request string instead of using FormData()
+    const metadata = { name: BACKUP_FILE_NAME, parents: ['appDataFolder'] };
+    const fileContent = JSON.stringify(fullyHydratedState);
+
     const boundary = '-------314159265358979323846';
     const delimiter = `\r\n--${boundary}\r\n`;
     const closeDelim = `\r\n--${boundary}--`;
@@ -235,7 +311,6 @@ async function pushToDrive() {
     let url = 'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart';
     let method = 'POST';
 
-    // If file exists, update it instead of producing duplicates
     if (files && files.length > 0) {
       url = `https://www.googleapis.com/upload/drive/v3/files/${files[0].id}?uploadType=multipart`;
       method = 'PATCH';
@@ -251,12 +326,9 @@ async function pushToDrive() {
     });
 
     if (uploadResponse.ok) {
-      console.log("State successfully pushed to Google Drive.");
       updateCloudUI('saved');
     } else {
-      const errText = await uploadResponse.text();
-      console.error("Google Drive API response rejection text:", errText);
-      throw new Error("Google Cloud save rejected formatting template parameters.");
+      throw new Error("Google API payload rejection.");
     }
   } catch (err) {
     console.error("Cloud synchronization push failure:", err);
@@ -272,18 +344,23 @@ async function pullFromDrive() {
     const { files } = await response.json();
 
     if (files && files.length > 0) {
-      if (confirm("Cloud backup instance found on Google Drive. Do you want to restore it? (This replaces your local runtime state)")) {
+      if(confirm("Cloud backup instance found on Google Drive. Do you want to restore it? (This replaces your local runtime state)")) {
         const downloadUrl = `https://www.googleapis.com/drive/v3/files/${files[0].id}?alt=media`;
         const fileResponse = await fetch(downloadUrl, { headers: { Authorization: `Bearer ${googleAccessToken}` } });
-        
-        if (!fileResponse.ok) throw new Error("Failed to read remote backup payload stream.");
-        
         const remoteState = await fileResponse.json();
         
-        // Merge the downloaded state, making sure we preserve the userName if missing
         state = Object.assign({}, state, remoteState);
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
         
+        // Populate local high-capacity storage
+        if (state.studyUploads && state.studyUploads.length > 0) {
+          for (let u of state.studyUploads) {
+            if (u.dataUrl) {
+              await saveFileToIndexedDB(u.id, u.dataUrl);
+            }
+          }
+        }
+
+        saveState();
         renderAll();
         checkOnboardingRequirement();
         showToast("Data pulled from Drive successfully! 🔄");
@@ -321,10 +398,12 @@ function checkOnboardingRequirement() {
 
 function updateGreetingDisplay() {
   const greetingEl = document.getElementById('welcomeGreeting');
-  if (state.userName && state.userName.trim() !== '') {
-    greetingEl.textContent = `Welcome back, ${state.userName}! 👋`;
-  } else {
-    greetingEl.textContent = 'Welcome back 👋';
+  if (greetingEl) {
+    if (state.userName && state.userName.trim() !== '') {
+      greetingEl.textContent = `Welcome back, ${state.userName}! 👋`;
+    } else {
+      greetingEl.textContent = 'Welcome back 👋';
+    }
   }
 }
 
@@ -332,22 +411,24 @@ function initOnboardingFlow() {
   const submitBtn = document.getElementById('onboardingSubmitBtn');
   const nameInput = document.getElementById('onboardingNameInput');
 
-  submitBtn.addEventListener('click', () => {
-    const enteredName = nameInput.value.trim();
-    if (!enteredName) {
-      showToast("Please enter a valid name to proceed!");
-      return;
-    }
-    state.userName = enteredName;
-    saveState();
-    document.getElementById('onboardingOverlay').classList.add('hidden');
-    updateGreetingDisplay();
-    showToast(`Welcome aboard, ${state.userName}! 🎉`);
-  });
+  if (submitBtn && nameInput) {
+    submitBtn.addEventListener('click', () => {
+      const enteredName = nameInput.value.trim();
+      if (!enteredName) {
+        showToast("Please enter a valid name to proceed!");
+        return;
+      }
+      state.userName = enteredName;
+      saveState();
+      document.getElementById('onboardingOverlay').classList.add('hidden');
+      updateGreetingDisplay();
+      showToast(`Welcome aboard, ${state.userName}! 🎉`);
+    });
 
-  nameInput.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') submitBtn.click();
-  });
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') submitBtn.click();
+    });
+  }
 }
 
 /* ===================== STREAK TRACKING ===================== */
@@ -357,7 +438,7 @@ function updateStreak() {
   if (!state.streak.lastVisit) {
     state.streak = { count: 1, lastVisit: today };
   } else if (state.streak.lastVisit === today) {
-    // Stalls cycle logic out
+    // Normal loop pass
   } else {
     const last = new Date(state.streak.lastVisit);
     const diffDays = Math.round((new Date(today) - last) / (1000 * 60 * 60 * 24));
@@ -369,7 +450,8 @@ function updateStreak() {
     state.streak.lastVisit = today;
   }
   saveState();
-  document.getElementById('streakCount').textContent = state.streak.count;
+  const element = document.getElementById('streakCount');
+  if (element) element.textContent = state.streak.count;
 }
 
 /* ===================== SIDEBAR / NAVIGATION ===================== */
@@ -412,57 +494,59 @@ function initNavigation() {
 
 function initTopbar() {
   const dateEl = document.getElementById('todayDate');
-  dateEl.textContent = new Date().toLocaleDateString(undefined, {
-    weekday: 'long', day: 'numeric', month: 'long'
-  });
+  if (dateEl) {
+    dateEl.textContent = new Date().toLocaleDateString(undefined, {
+      weekday: 'long', day: 'numeric', month: 'long'
+    });
+  }
 
   const input = document.getElementById('globalSearch');
-  const dropdown = document.getElementById('searchDropdown');
   const clearBtn = document.getElementById('searchClear');
 
-  input.addEventListener('input', () => {
-    const q = input.value.trim();
-    clearBtn.classList.toggle('hidden', !q);
-    if (!q) { closeSearchDropdown(); return; }
-    renderSearchDropdown(q);
-  });
+  if (input) {
+    input.addEventListener('input', () => {
+      const q = input.value.trim();
+      if (clearBtn) clearBtn.classList.toggle('hidden', !q);
+      if (!q) { closeSearchDropdown(); return; }
+      renderSearchDropdown(q);
+    });
 
-  input.addEventListener('keydown', e => {
-    if (e.key === 'Escape') { clearSearch(); }
-  });
+    input.addEventListener('keydown', e => {
+      if (e.key === 'Escape') { clearSearch(); }
+    });
+  }
 
-  clearBtn.addEventListener('click', clearSearch);
+  if (clearBtn) clearBtn.addEventListener('click', clearSearch);
 
   document.addEventListener('click', e => {
-    if (!document.getElementById('searchWrap').contains(e.target)) {
+    const wrap = document.getElementById('searchWrap');
+    if (wrap && !wrap.contains(e.target)) {
       closeSearchDropdown();
     }
   });
 }
 
 function clearSearch() {
-  document.getElementById('globalSearch').value = '';
-  document.getElementById('searchClear').classList.add('hidden');
+  const input = document.getElementById('globalSearch');
+  if (input) input.value = '';
+  const clearBtn = document.getElementById('searchClear');
+  if (clearBtn) clearBtn.classList.add('hidden');
   closeSearchDropdown();
 }
 
 function closeSearchDropdown() {
   const dd = document.getElementById('searchDropdown');
-  dd.classList.add('hidden');
-  dd.innerHTML = '';
+  if (dd) {
+    dd.classList.add('hidden');
+    dd.innerHTML = '';
+  }
 }
 
 function buildSearchIndex() {
   const results = [];
 
   state.subjects.forEach(s => {
-    results.push({
-      label: s.name,
-      sub: s.code || 'Subject',
-      icon: '📚',
-      section: 'subjects',
-      id: s.id
-    });
+    results.push({ label: s.name, sub: s.code || 'Subject', icon: '📚', section: 'subjects', id: s.id });
   });
 
   state.tasks.forEach(t => {
@@ -477,55 +561,24 @@ function buildSearchIndex() {
   });
 
   state.notes.forEach(n => {
-    results.push({
-      label: n.title || 'Untitled note',
-      sub: n.content ? n.content.replace(/<[^>]*>/g, '').slice(0, 60) : '',
-      icon: '🗒️',
-      section: 'notes',
-      id: n.id
-    });
+    results.push({ label: n.title || 'Untitled note', sub: n.content ? n.content.replace(/<[^>]*>/g, '').slice(0, 60) : '', icon: '🗒️', section: 'notes', id: n.id });
   });
 
   state.studyDocs.forEach(d => {
-    results.push({
-      label: d.title || 'Untitled Document',
-      sub: 'Study document · ' + new Date(d.updatedAt).toLocaleDateString(),
-      icon: '📄',
-      section: 'studymaterial',
-      id: d.id
-    });
+    results.push({ label: d.title || 'Untitled Document', sub: 'Study document · ' + new Date(d.updatedAt).toLocaleDateString(), icon: '📄', section: 'studymaterial', id: d.id });
   });
 
   state.studyUploads.forEach(u => {
     const subjU = state.subjects.find(s => s.id === u.subjectId);
-    results.push({
-      label: u.name,
-      sub: 'Uploaded file · ' + formatBytes(u.size) + (subjU ? ' · ' + subjU.name : ''),
-      icon: getFileIcon(u.mimeType),
-      section: 'studymaterial',
-      id: u.id,
-      isUpload: true
-    });
+    results.push({ label: u.name, sub: 'Uploaded file · ' + formatBytes(u.size) + (subjU ? ' · ' + subjU.name : ''), icon: getFileIcon(u.mimeType), section: 'studymaterial', id: u.id, isUpload: true });
   });
 
   state.achievements.forEach(a => {
-    results.push({
-      label: a.title,
-      sub: ACHIEVEMENT_LABELS[a.category] || 'Achievement',
-      icon: ACHIEVEMENT_ICONS[a.category] || '⭐',
-      section: 'achievements',
-      id: a.id
-    });
+    results.push({ label: a.title, sub: ACHIEVEMENT_LABELS[a.category] || 'Achievement', icon: ACHIEVEMENT_ICONS[a.category] || '⭐', section: 'achievements', id: a.id });
   });
 
   state.todos.forEach(t => {
-    results.push({
-      label: t.text,
-      sub: t.done ? 'To-do · done' : 'To-do · pending',
-      icon: t.done ? '✅' : '⬜',
-      section: 'todo',
-      id: t.id
-    });
+    results.push({ label: t.text, sub: t.done ? 'To-do · done' : 'To-do · pending', icon: t.done ? '✅' : '⬜', section: 'todo', id: t.id });
   });
 
   return results;
@@ -534,8 +587,9 @@ function buildSearchIndex() {
 function renderSearchDropdown(query) {
   const q = query.toLowerCase();
   const dropdown = document.getElementById('searchDropdown');
+  if (!dropdown) return;
+  
   const index = buildSearchIndex();
-
   const matches = index.filter(item =>
     item.label.toLowerCase().includes(q) ||
     (item.sub && item.sub.toLowerCase().includes(q))
@@ -584,6 +638,24 @@ function renderSearchDropdown(query) {
   dropdown.classList.remove('hidden');
 }
 
+function escapeRegex(str) {
+  return str.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function sectionLabel(section) {
+  const map = {
+    dashboard: 'Dashboard', subjects: 'Subjects', attendance: 'Attendance',
+    cgpa: 'CGPA', tasks: 'Tasks', todo: 'To-Do', notes: 'Notes',
+    achievements: 'Achievements', studymaterial: 'Study Material'
+  };
+  return map[section] || section;
+}
+
+function navigateToSection(section) {
+  const navItem = document.querySelector(`.nav-item[data-section="${section}"]`);
+  if (navItem) navItem.click();
+}
+
 /* ============================================================
    SUBJECT MANAGER
    ============================================================ */
@@ -595,6 +667,8 @@ function initSubjectManager() {
   const colorInput = document.getElementById('subjectColor');
   const editingIdInput = document.getElementById('editingSubjectId');
   const formTitle = document.getElementById('subjectFormTitle');
+
+  if (!formCard) return;
 
   document.getElementById('addSubjectBtn').addEventListener('click', () => {
     editingIdInput.value = '';
@@ -674,6 +748,7 @@ function deleteSubject(id) {
 function renderSubjects() {
   const grid = document.getElementById('subjectGrid');
   const emptyHint = document.getElementById('subjectsEmpty');
+  if (!grid) return;
   grid.innerHTML = '';
 
   if (state.subjects.length === 0) {
@@ -702,7 +777,7 @@ function renderSubjects() {
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path></svg>
           </button>
           <button class="icon-btn danger" data-action="delete" title="Delete subject">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path><path d="M10 11v6"></path><path d="M14 11v6"></path><path d="M9 6V4a1 1 0 0 1 1-1h4a1 1 0 0 1 1 1v2"></path></svg>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"></polyline><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path></svg>
           </button>
         </div>
       </div>
@@ -743,14 +818,16 @@ function getSubjectGoal(subject) {
 
 function initAttendanceGoal() {
   const globalInput = document.getElementById('globalAttendanceGoal');
-  globalInput.value = state.globalAttendanceGoal;
-  globalInput.addEventListener('change', () => {
-    const val = Math.min(100, Math.max(1, parseInt(globalInput.value) || 75));
-    globalInput.value = val;
-    state.globalAttendanceGoal = val;
-    saveState();
-    renderAttendance();
-  });
+  if (globalInput) {
+    globalInput.value = state.globalAttendanceGoal;
+    globalInput.addEventListener('change', () => {
+      const val = Math.min(100, Math.max(1, parseInt(globalInput.value) || 75));
+      globalInput.value = val;
+      state.globalAttendanceGoal = val;
+      saveState();
+      renderAttendance();
+    });
+  }
 }
 
 function getAttendanceGoalInfo(present, total, targetPct) {
@@ -793,6 +870,7 @@ function renderAttendanceGoalMessage(present, absent, targetPct) {
 function renderAttendance() {
   const grid = document.getElementById('attendanceGrid');
   const emptyHint = document.getElementById('attendanceEmpty');
+  if (!grid) return;
   grid.innerHTML = '';
 
   if (state.subjects.length === 0) {
@@ -957,24 +1035,28 @@ function resetAttendance(subjectId) {
    ============================================================ */
 
 function initCgpaCalculator() {
-  document.getElementById('addSemesterBtn').addEventListener('click', () => {
-    const semNumber = state.semesters.length + 1;
-    state.semesters.push({
-      id: genId(),
-      label: `Semester ${semNumber}`,
-      sgpa: 0,
-      credits: 0
+  const element = document.getElementById('addSemesterBtn');
+  if (element) {
+    element.addEventListener('click', () => {
+      const semNumber = state.semesters.length + 1;
+      state.semesters.push({
+        id: genId(),
+        label: `Semester ${semNumber}`,
+        sgpa: 0,
+        credits: 0
+      });
+      saveState();
+      renderCgpa();
+      renderDashboard();
     });
-    saveState();
-    renderCgpa();
-    renderDashboard();
-  });
+  }
 }
 
 function renderCgpa() {
   const tbody = document.getElementById('semesterTableBody');
   const emptyHint = document.getElementById('semestersEmpty');
   const countTag = document.getElementById('semesterCountTag');
+  if (!tbody) return;
   tbody.innerHTML = '';
 
   countTag.textContent = `${state.semesters.length} semester${state.semesters.length === 1 ? '' : 's'}`;
@@ -1042,10 +1124,12 @@ function recalcCgpaOnly() {
   });
 
   const cgpa = totalCredits > 0 ? (weightedSum / totalCredits) : 0;
-  document.getElementById('cgpaResult').textContent = cgpa.toFixed(2);
+  const resultEl = document.getElementById('cgpaResult');
+  if (resultEl) resultEl.textContent = cgpa.toFixed(2);
 
   const pct = Math.min(100, (cgpa / 10) * 100);
-  document.getElementById('cgpaBarFill').style.width = `${pct}%`;
+  const fillEl = document.getElementById('cgpaBarFill');
+  if (fillEl) fillEl.style.width = `${pct}%`;
 }
 
 /* ============================================================
@@ -1056,6 +1140,7 @@ let currentTaskFilter = 'all';
 
 function initTaskTracker() {
   const formCard = document.getElementById('taskFormCard');
+  if (!formCard) return;
 
   document.getElementById('addTaskBtn').addEventListener('click', () => {
     populateTaskSubjectSelect();
@@ -1107,6 +1192,7 @@ function initTaskTracker() {
 
 function populateTaskSubjectSelect() {
   const select = document.getElementById('taskSubjectSelect');
+  if (!select) return;
   select.innerHTML = '<option value="">No subject</option>';
   state.subjects.forEach(subject => {
     const opt = document.createElement('option');
@@ -1135,6 +1221,7 @@ function deleteTask(id) {
 function renderTasks() {
   const list = document.getElementById('taskList');
   const emptyHint = document.getElementById('tasksEmpty');
+  if (!list) return;
   list.innerHTML = '';
 
   let filtered = state.tasks.slice();
@@ -1203,17 +1290,20 @@ function renderTasks() {
    ============================================================ */
 
 function initTodoAndPlanner() {
-  document.getElementById('addTodoBtn').addEventListener('click', addTodo);
-  document.getElementById('todoInput').addEventListener('keydown', e => {
-    if (e.key === 'Enter') addTodo();
-  });
+  const todoBtn = document.getElementById('addTodoBtn');
+  if (todoBtn) {
+    todoBtn.addEventListener('click', addTodo);
+    document.getElementById('todoInput').addEventListener('keydown', e => {
+      if (e.key === 'Enter') addTodo();
+    });
 
-  document.getElementById('plannerDate').value = formatDateInput(new Date());
-  document.getElementById('addPlannerBtn').addEventListener('click', addPlannerItem);
-  document.getElementById('plannerActivity').addEventListener('keydown', e => {
-    if (e.key === 'Enter') addPlannerItem();
-  });
-  document.getElementById('plannerDate').addEventListener('change', renderPlanner);
+    document.getElementById('plannerDate').value = formatDateInput(new Date());
+    document.getElementById('addPlannerBtn').addEventListener('click', addPlannerItem);
+    document.getElementById('plannerActivity').addEventListener('keydown', e => {
+      if (e.key === 'Enter') addPlannerItem();
+    });
+    document.getElementById('plannerDate').addEventListener('change', renderPlanner);
+  }
 }
 
 function addTodo() {
@@ -1245,6 +1335,7 @@ function renderTodos() {
   const list = document.getElementById('todoList');
   const emptyHint = document.getElementById('todoEmpty');
   const countTag = document.getElementById('todoCountTag');
+  if (!list) return;
   list.innerHTML = '';
 
   const pending = state.todos.filter(t => !t.done).length;
@@ -1304,7 +1395,9 @@ function deletePlannerItem(date, id) {
 }
 
 function renderPlanner() {
-  const date = document.getElementById('plannerDate').value || formatDateInput(new Date());
+  const dateInput = document.getElementById('plannerDate');
+  if (!dateInput) return;
+  const date = dateInput.value || formatDateInput(new Date());
   const list = document.getElementById('plannerList');
   const emptyHint = document.getElementById('plannerEmpty');
   list.innerHTML = '';
@@ -1337,16 +1430,19 @@ function renderPlanner() {
    ============================================================ */
 
 function initNotes() {
-  document.getElementById('addNoteBtn').addEventListener('click', () => {
-    state.notes.unshift({
-      id: genId(),
-      title: 'Untitled note',
-      content: '',
-      updatedAt: Date.now()
+  const noteBtn = document.getElementById('addNoteBtn');
+  if (noteBtn) {
+    noteBtn.addEventListener('click', () => {
+      state.notes.unshift({
+        id: genId(),
+        title: 'Untitled note',
+        content: '',
+        updatedAt: Date.now()
+      });
+      saveState();
+      renderNotes();
     });
-    saveState();
-    renderNotes();
-  });
+  }
 }
 
 function updateNote(id, field, value) {
@@ -1366,6 +1462,7 @@ function deleteNote(id) {
 function renderNotes() {
   const grid = document.getElementById('notesGrid');
   const emptyHint = document.getElementById('notesEmpty');
+  if (!grid) return;
   grid.innerHTML = '';
 
   if (state.notes.length === 0) {
@@ -1424,6 +1521,7 @@ const ACHIEVEMENT_LABELS = {
 
 function initAchievements() {
   const formCard = document.getElementById('achievementFormCard');
+  if (!formCard) return;
 
   document.getElementById('addAchievementBtn').addEventListener('click', () => {
     document.getElementById('achievementTitle').value = '';
@@ -1469,6 +1567,7 @@ function deleteAchievement(id) {
 function renderAchievements() {
   const grid = document.getElementById('achievementGrid');
   const emptyHint = document.getElementById('achievementsEmpty');
+  if (!grid) return;
   grid.innerHTML = '';
 
   if (state.achievements.length === 0) {
@@ -1506,7 +1605,9 @@ function renderAchievements() {
    ============================================================ */
 
 function renderDashboard() {
-  document.getElementById('statSubjects').textContent = state.subjects.length;
+  const statsSub = document.getElementById('statSubjects');
+  if (!statsSub) return;
+  statsSub.textContent = state.subjects.length;
 
   const subjectsWithData = state.subjects.filter(s => (s.present + s.absent) > 0);
   let avgAttendance = 0;
@@ -1537,6 +1638,7 @@ function renderDashboard() {
 function renderAttendanceChart() {
   const chart = document.getElementById('attendanceChart');
   const emptyHint = document.getElementById('attendanceChartEmpty');
+  if (!chart) return;
   chart.innerHTML = '';
 
   if (state.subjects.length === 0) {
@@ -1564,6 +1666,7 @@ function renderAttendanceChart() {
 
 function renderUpcomingDeadlines() {
   const list = document.getElementById('upcomingDeadlines');
+  if (!list) return;
   list.innerHTML = '';
 
   const upcoming = state.tasks
@@ -1590,6 +1693,7 @@ function renderUpcomingDeadlines() {
 function renderTodayPlan() {
   const list = document.getElementById('todayPlanList');
   const countTag = document.getElementById('todayPlanCount');
+  if (!list) return;
   list.innerHTML = '';
 
   const today = formatDateInput(new Date());
@@ -1614,6 +1718,7 @@ function renderTodayPlan() {
 
 function renderRecentAchievements() {
   const list = document.getElementById('recentAchievements');
+  if (!list) return;
   list.innerHTML = '';
 
   if (state.achievements.length === 0) {
@@ -1660,7 +1765,10 @@ function formatBytes(bytes) {
 }
 
 function initStudyMaterial() {
-  document.getElementById('smNewDocBtn').addEventListener('click', createNewDoc);
+  const docBtn = document.getElementById('smNewDocBtn');
+  if (!docBtn) return;
+
+  docBtn.addEventListener('click', createNewDoc);
   document.getElementById('smEmptyNewBtn').addEventListener('click', createNewDoc);
   document.getElementById('smFileUpload').addEventListener('change', handleFileUpload);
   document.getElementById('smDocSearch').addEventListener('input', renderDocList);
@@ -1760,6 +1868,9 @@ function initStudyMaterial() {
   document.getElementById('smDeleteUploadBtn').addEventListener('click', () => {
     if (!activeUploadId) return;
     if (!confirm('Delete this uploaded file?')) return;
+    
+    // Explicit clean out of structural databases
+    deleteFileFromIndexedDB(activeUploadId);
     state.studyUploads = state.studyUploads.filter(u => u.id !== activeUploadId);
     activeUploadId = null;
     saveState();
@@ -1888,12 +1999,55 @@ function openDoc(id) {
   document.getElementById('smDocTitle').focus();
 }
 
-function openUpload(id) {
+async function handleFileUpload(e) {
+  const files = Array.from(e.target.files);
+  for (const file of files) {
+    const dataUrl = await fileToDataUrl(file);
+    const fileId = genId();
+
+    // Prevent local ceiling crashes by routing file bytes directly into native high capacity IndexedDB parameters
+    await saveFileToIndexedDB(fileId, dataUrl);
+
+    const upload = {
+      id: fileId,
+      name: file.name,
+      mimeType: file.type,
+      size: file.size,
+      uploadedAt: Date.now(),
+      subjectId: null,
+      dataUrl: googleAccessToken ? dataUrl : "" 
+    };
+    state.studyUploads.unshift(upload);
+  }
+  saveState();
+  renderDocList();
+  if (files.length) {
+    showToast(`${files.length} file${files.length > 1 ? 's' : ''} uploaded`);
+    openUpload(state.studyUploads[0].id);
+  }
+  e.target.value = ''; 
+}
+
+function fileToDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
+}
+
+async function openUpload(id) {
   const upload = state.studyUploads.find(u => u.id === id);
   if (!upload) return;
 
   activeUploadId = id;
   activeDocId = null;
+
+  let activeDataUrl = upload.dataUrl;
+  if (!activeDataUrl) {
+    activeDataUrl = await getFileFromIndexedDB(upload.id);
+  }
 
   document.getElementById('smEmptyState').classList.add('hidden');
   document.getElementById('smEditorWrap').classList.add('hidden');
@@ -1910,19 +2064,19 @@ function openUpload(id) {
   }
 
   const dl = document.getElementById('smUploadDownload');
-  dl.href = upload.dataUrl;
+  dl.href = activeDataUrl;
   dl.download = upload.name;
 
   const preview = document.getElementById('smUploadPreview');
   preview.innerHTML = '';
   if (upload.mimeType.startsWith('image/')) {
     const img = document.createElement('img');
-    img.src = upload.dataUrl;
+    img.src = activeDataUrl;
     img.className = 'sm-preview-img';
     preview.appendChild(img);
   } else if (upload.mimeType === 'application/pdf') {
     try {
-      const byteString = atob(upload.dataUrl.split(',')[1]);
+      const byteString = atob(activeDataUrl.split(',')[1]);
       const ab = new ArrayBuffer(byteString.length);
       const ia = new Uint8Array(ab);
       for (let i = 0; i < byteString.length; i++) ia[i] = byteString.charCodeAt(i);
@@ -1934,7 +2088,7 @@ function openUpload(id) {
       iframe.title = upload.name;
       preview.appendChild(iframe);
     } catch(e) {
-      preview.innerHTML = `<p class="empty-hint">📕 PDF preview failed. <a href="${upload.dataUrl}" download="${escapeHtml(upload.name)}" style="color:var(--mint)">Download instead</a>.</p>`;
+      preview.innerHTML = `<p class="empty-hint">📕 PDF preview failed. <a href="${activeDataUrl}" download="${escapeHtml(upload.name)}" style="color:var(--mint)">Download instead</a>.</p>`;
     }
   } else if (upload.mimeType === 'application/msword' ||
              upload.mimeType === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
@@ -1945,7 +2099,7 @@ function openUpload(id) {
         <div style="font-size:3rem;margin-bottom:12px;">📘</div>
         <h3 style="margin-bottom:8px;">${escapeHtml(upload.name)}</h3>
         <p style="color:var(--text-muted);margin-bottom:20px;font-size:0.9rem;">Word documents can't be previewed inline, but you can download and open them.</p>
-        <a class="btn btn-primary" href="${upload.dataUrl}" download="${escapeHtml(upload.name)}">
+        <a class="btn btn-primary" href="${activeDataUrl}" download="${escapeHtml(upload.name)}">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="7 10 12 15 17 10"></polyline><line x1="12" y1="15" x2="12" y2="3"></line></svg>
           Download Word File
         </a>
@@ -1954,18 +2108,18 @@ function openUpload(id) {
     preview.appendChild(infoDiv);
   } else if (upload.mimeType.startsWith('video/')) {
     const video = document.createElement('video');
-    video.src = upload.dataUrl;
+    video.src = activeDataUrl;
     video.controls = true;
     video.className = 'sm-preview-video';
     preview.appendChild(video);
   } else if (upload.mimeType.startsWith('audio/')) {
     const audio = document.createElement('audio');
-    audio.src = upload.dataUrl;
+    audio.src = activeDataUrl;
     audio.controls = true;
     audio.className = 'sm-preview-audio';
     preview.appendChild(audio);
   } else if (upload.mimeType === 'text/plain') {
-    fetch(upload.dataUrl).then(r => r.text()).then(text => {
+    fetch(activeDataUrl).then(r => r.text()).then(text => {
       const pre = document.createElement('pre');
       pre.className = 'sm-preview-text';
       pre.textContent = text;
@@ -1993,41 +2147,9 @@ function highlightActiveDoc() {
   });
 }
 
-async function handleFileUpload(e) {
-  const files = Array.from(e.target.files);
-  for (const file of files) {
-    const dataUrl = await fileToDataUrl(file);
-    const upload = {
-      id: genId(),
-      name: file.name,
-      dataUrl,
-      mimeType: file.type,
-      size: file.size,
-      uploadedAt: Date.now(),
-      subjectId: null
-    };
-    state.studyUploads.unshift(upload);
-  }
-  saveState();
-  renderDocList();
-  if (files.length) {
-    showToast(`${files.length} file${files.length > 1 ? 's' : ''} uploaded`);
-    openUpload(state.studyUploads[0].id);
-  }
-  e.target.value = ''; 
-}
-
-function fileToDataUrl(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
-}
-
 function populateSmSubjectSelect() {
   const sel = document.getElementById('smDocSubject');
+  if (!sel) return;
   const current = sel.value;
   sel.innerHTML = '<option value="">No subject</option>';
   state.subjects.forEach(s => {
@@ -2068,6 +2190,8 @@ function populateSmSubjectSelect() {
 function renderDocList() {
   const list = document.getElementById('smDocList');
   const emptyHint = document.getElementById('smDocListEmpty');
+  if (!list) return;
+  
   const query = (document.getElementById('smDocSearch').value || '').toLowerCase();
   list.innerHTML = '';
 
@@ -2142,6 +2266,16 @@ function renderDocList() {
   highlightActiveDoc();
 }
 
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 /* ============================================================
    POMODORO TIMER
    ============================================================ */
@@ -2191,9 +2325,11 @@ function loadPomo() {
 }
 
 function initPomodoro() {
+  const pomoInput = document.getElementById('pomoWorkMin');
+  if (!pomoInput) return;
   loadPomo();
 
-  document.getElementById('pomoWorkMin').value = pomoState.settings.work;
+  pomoInput.value = pomoState.settings.work;
   document.getElementById('pomoShortMin').value = pomoState.settings.short;
   document.getElementById('pomoLongMin').value = pomoState.settings.long;
   document.getElementById('pomoSessionsUntilLong').value = pomoState.settings.sessionsUntilLong;
@@ -2418,8 +2554,8 @@ function renderAll() {
    INIT
    ============================================================ */
 
-document.addEventListener('DOMContentLoaded', () => {
-  loadState();
+document.addEventListener('DOMContentLoaded', async () => {
+  await loadState();
   initOnboardingFlow();
   checkOnboardingRequirement();
   updateStreak();
