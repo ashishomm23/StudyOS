@@ -348,8 +348,8 @@ async function pushToDrive() {
     
     const metadata = { 
       name: BACKUP_FILE_NAME, 
-      mimeType: 'application/json',
-      parents: ['appDataFolder'] 
+      mimeType: 'application/json'
+      // parents only needed for POST, not PATCH
     };
 
     const boundary = '===============' + Date.now() + '===============';
@@ -372,7 +372,8 @@ async function pushToDrive() {
 
     if (files && files.length > 0) {
       const fileId = files[0].id;
-      url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&fields=id,name,webViewLink`;
+      // ✅ FIXED: Use addParents parameter for PATCH instead of parents in metadata
+      url = `https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=multipart&addParents=appDataFolder&fields=id,name,webViewLink`;
       method = 'PATCH';
       logCloudEvent('DEBUG', `Updating existing file: ${fileId}`);
     }
